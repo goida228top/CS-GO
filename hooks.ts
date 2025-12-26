@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { ControlState } from './types';
 
@@ -10,7 +11,10 @@ export const useKeyboardControls = (): ControlState => {
     jump: false,
     crouch: false,
     equip: false,
-    ragdoll: false,
+    shoot: false,
+    aim: false,
+    toggleFly: false,
+    boost: false,
   });
 
   useEffect(() => {
@@ -42,13 +46,12 @@ export const useKeyboardControls = (): ControlState => {
         case 'KeyE':
           setMovement((m) => ({ ...m, equip: true }));
           break;
-        case 'KeyR':
-           // Для рагдола сделаем переключение (toggle) прямо здесь или просто флаг
-           // Но лучше просто флаг нажатия, а переключение логики в компоненте.
-           // В данном случае просто передаем true пока нажата, 
-           // но для удобства сделаем toggle в компоненте Player.
-           setMovement((m) => ({ ...m, ragdoll: true }));
-           break;
+        case 'KeyF':
+          setMovement((m) => ({ ...m, toggleFly: true }));
+          break;
+        case 'KeyG':
+          setMovement((m) => ({ ...m, boost: true }));
+          break;
       }
     };
 
@@ -80,18 +83,50 @@ export const useKeyboardControls = (): ControlState => {
         case 'KeyE':
           setMovement((m) => ({ ...m, equip: false }));
           break;
-        case 'KeyR':
-          setMovement((m) => ({ ...m, ragdoll: false }));
+        case 'KeyF':
+          setMovement((m) => ({ ...m, toggleFly: false }));
+          break;
+        case 'KeyG':
+          setMovement((m) => ({ ...m, boost: false }));
           break;
       }
     };
 
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 2) {
+        setMovement((m) => ({ ...m, aim: true }));
+      }
+      if (e.button === 0) {
+        setMovement((m) => ({ ...m, shoot: true }));
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        setMovement((m) => ({ ...m, aim: false }));
+      }
+      if (e.button === 0) {
+        setMovement((m) => ({ ...m, shoot: false }));
+      }
+    };
+
+    // Блокируем контекстное меню браузера при нажатии ПКМ
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
 

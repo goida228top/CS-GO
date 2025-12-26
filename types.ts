@@ -1,3 +1,6 @@
+
+import { Vector3 } from 'three';
+
 export interface ControlState {
   forward: boolean;
   backward: boolean;
@@ -6,7 +9,20 @@ export interface ControlState {
   jump: boolean;
   crouch: boolean;
   equip: boolean;
-  ragdoll: boolean; // Включение/выключение физики
+  shoot: boolean; // Стрельба
+  aim: boolean; // Прицеливание
+  toggleFly: boolean; // Включение полета (F)
+  boost: boolean; // Ускорение (G)
 }
 
 export type Keys = keyof ControlState;
+
+// Расширяем window для хранения глобальных настроек отладки
+declare global {
+  interface Window {
+    GAME_SETTINGS: {
+      gunForce: number;
+      dragMode: boolean;
+    };
+  }
+}

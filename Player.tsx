@@ -1,30 +1,28 @@
+
+// Player.tsx - PHYSICS CONTROLLER UPDATE
+
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree, createPortal } from '@react-three/fiber';
-import { Vector3, Group, Object3D, Quaternion, Mesh } from 'three';
+import { Vector3, Group, Object3D, MathUtils, LoopRepeat, Raycaster, Vector2, PerspectiveCamera, Quaternion } from 'three';
 import { useKeyboardControls } from './hooks';
 import { useGLTF, useAnimations } from '@react-three/drei';
-import { RigidBody, useSphericalJoint } from '@react-three/rapier';
+import { RigidBody, CuboidCollider, useSphericalJoint, RapierRigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 
 // --- НАСТРОЙКИ ---
-const RUN_SPEED = 5; 
-const WALK_SPEED = 2.5;
-const JUMP_FORCE = 10;
-const GRAVITY = 25;
+const RUN_SPEED = 6; 
+const WALK_SPEED = 3;
+const FLY_SPEED = 20;
+const SUPER_SPEED = 80;
+
+const JUMP_FORCE = 6; // Немного уменьшил, так как физика теперь честная
 const CAMERA_DISTANCE = 3.5;
 const CAMERA_RIGHT_OFFSET = 0.7; 
 const HEAD_YAW_LIMIT = Math.PI / 2.5; 
 
-// Настройки "Выстрела из дробовика"
-// Увеличили силу, чтобы труп летел "смачно"
-const SHOTGUN_FORCE = 120; 
-const SHOTGUN_LIFT = 60;  
-
-const PLAYER_MODEL_URL = 'https://raw.githubusercontent.com/goida228top/textures/main/model.gltf';
+export const PLAYER_MODEL_URL = 'https://raw.githubusercontent.com/goida228top/textures/main/model.gltf?v=3';
 const PISTOL_URL = 'https://raw.githubusercontent.com/goida228top/textures/main/pistol.gltf';
 
-interface PlayerProps {
-  isLocked: boolean;
-}
+interface PlayerProps { isLocked: boolean; }
 
 const normalizeAngle = (angle: number) => {
   let a = angle % (2 * Math.PI);
@@ -33,374 +31,423 @@ const normalizeAngle = (angle: number) => {
   return a;
 };
 
-// --- КОМПОНЕНТ ОРУЖИЯ ---
+export const S = 0.66; 
+export const BODY_HALF_SIZE = { x: 0.25 * S, y: 0.375 * S, z: 0.125 * S };
+export const HEAD_HALF_SIZE = { x: 0.2 * S, y: 0.2 * S, z: 0.2 * S };
+export const LIMB_HALF_SIZE = { x: 0.125 * S, y: 0.375 * S, z: 0.125 * S };
+
 const WeaponRenderer = () => {
   const { scene } = useGLTF(PISTOL_URL);
   const clone = React.useMemo(() => scene.clone(), [scene]);
   return (
-    <group position={[0, -0.55, 0.05]} rotation={[Math.PI / 2, Math.PI, Math.PI]} scale={1.2}>
+    <group position={[0, -0.65, 0.15]} rotation={[Math.PI / 2 - 0.2, Math.PI, Math.PI]} scale={1.2}>
       <primitive object={clone} />
     </group>
   );
 };
 
-// --- КОМПОНЕНТ РАГДОЛЛА (Использует части реальной модели) ---
-const Ragdoll = ({ position, rotation }: { position: Vector3, rotation: number }) => {
+export const Ragdoll = ({ 
+    position, 
+    initialVelocity = new Vector3(0,0,0),
+}: { 
+    position: Vector3, 
+    initialVelocity?: Vector3,
+}) => {
   const { scene } = useGLTF(PLAYER_MODEL_URL);
-  
-  // Разбираем модель на части для физики
-  const modelParts = useMemo(() => {
-    const clone = scene.clone();
-    const parts: any = {
-      head: null,
-      body: null,
-      armL: null,
-      armR: null,
-      legL: null,
-      legR: null
-    };
 
+  const modelParts = useMemo(() => {
+    const clone = scene.clone(true); 
+    const parts: { [key: string]: Object3D } = {};
     clone.traverse((child) => {
-      if (child.type === 'Mesh' || child.type === 'Group') {
+      if (child.type === 'Mesh') {
+        const mesh = child.clone();
+        mesh.position.set(0, 0, 0); 
+        mesh.rotation.set(0, 0, 0);
+        mesh.scale.set(S, S, S); 
+        
         const name = child.name.toLowerCase();
-        // Пытаемся найти части тела по имени в GLTF
-        if (name.includes('head')) parts.head = child;
-        else if (name.includes('body') || name.includes('torso')) parts.body = child;
-        else if ((name.includes('arm') || name.includes('hand')) && name.includes('left')) parts.armL = child;
-        else if ((name.includes('arm') || name.includes('hand')) && name.includes('right')) parts.armR = child;
-        else if (name.includes('leg') && name.includes('left')) parts.legL = child;
-        else if (name.includes('leg') && name.includes('right')) parts.legR = child;
+        if (name.includes('head')) parts.head = mesh;
+        else if (name.includes('body') || name.includes('torso')) parts.body = mesh;
+        else if (name.includes('arm') && name.includes('left')) parts.armL = mesh;
+        else if (name.includes('arm') && name.includes('right')) parts.armR = mesh;
+        else if (name.includes('leg') && name.includes('left')) parts.legL = mesh;
+        else if (name.includes('leg') && name.includes('right')) parts.legR = mesh;
       }
     });
-    
-    // Если части не найдены (например, имена другие), берем просто что есть или создаем пустышки, 
-    // но здесь мы полагаемся на то, что модель стандартная (Steve-like).
     return parts;
   }, [scene]);
 
-  // Физические ссылки
-  const torsoRef = useRef<any>(null);
-  const headRef = useRef<any>(null);
-  const leftArmRef = useRef<any>(null);
-  const rightArmRef = useRef<any>(null);
-  const leftLegRef = useRef<any>(null);
-  const rightLegRef = useRef<any>(null);
-  
-  const { camera } = useThree();
+  const legHeight = LIMB_HALF_SIZE.y * 2;
+  const bodyHeight = BODY_HALF_SIZE.y * 2;
 
-  // --- СУСТАВЫ (КЛЕЙ) ---
-  // Соединяем части тела "суставами", чтобы они не разлетались
-  useSphericalJoint(torsoRef, headRef, [[0, 0.375, 0], [0, -0.25, 0]]); 
-  useSphericalJoint(torsoRef, leftArmRef, [[-0.25, 0.35, 0], [0.125, 0.35, 0]]); 
-  useSphericalJoint(torsoRef, rightArmRef, [[0.25, 0.35, 0], [-0.125, 0.35, 0]]); 
-  useSphericalJoint(torsoRef, leftLegRef, [[-0.125, -0.375, 0], [0, 0.375, 0]]); 
-  useSphericalJoint(torsoRef, rightLegRef, [[0.125, -0.375, 0], [0, 0.375, 0]]);
+  const relativePositions = {
+    body: new Vector3(0, legHeight + BODY_HALF_SIZE.y, 0),
+    head: new Vector3(0, legHeight + bodyHeight + HEAD_HALF_SIZE.y, 0),
+    armL: new Vector3(-(BODY_HALF_SIZE.x + LIMB_HALF_SIZE.x), legHeight + bodyHeight - LIMB_HALF_SIZE.y, 0),
+    armR: new Vector3(BODY_HALF_SIZE.x + LIMB_HALF_SIZE.x, legHeight + bodyHeight - LIMB_HALF_SIZE.y, 0),
+    legL: new Vector3(-BODY_HALF_SIZE.x * 0.5, LIMB_HALF_SIZE.y, 0),
+    legR: new Vector3(BODY_HALF_SIZE.x * 0.5, LIMB_HALF_SIZE.y, 0),
+  };
 
-  // --- ЭФФЕКТ ДРОБОВИКА (ИМПУЛЬС) ---
+  const bodyPos = position.clone().add(relativePositions.body);
+  const headPos = position.clone().add(relativePositions.head);
+  const armLPos = position.clone().add(relativePositions.armL);
+  const armRPos = position.clone().add(relativePositions.armR);
+  const legLPos = position.clone().add(relativePositions.legL);
+  const legRPos = position.clone().add(relativePositions.legR);
+
+  const bodyRef = useRef<RapierRigidBody>(null);
+  const headRef = useRef<RapierRigidBody>(null);
+  const armLRef = useRef<RapierRigidBody>(null);
+  const armRRef = useRef<RapierRigidBody>(null);
+  const legLRef = useRef<RapierRigidBody>(null);
+  const legRRef = useRef<RapierRigidBody>(null);
+
+  useSphericalJoint(bodyRef, headRef, [[0, BODY_HALF_SIZE.y, 0], [0, -HEAD_HALF_SIZE.y, 0]]);
+  useSphericalJoint(bodyRef, armLRef, [[-BODY_HALF_SIZE.x, BODY_HALF_SIZE.y, 0], [LIMB_HALF_SIZE.x, LIMB_HALF_SIZE.y, 0]]);
+  useSphericalJoint(bodyRef, armRRef, [[BODY_HALF_SIZE.x, BODY_HALF_SIZE.y, 0], [-LIMB_HALF_SIZE.x, LIMB_HALF_SIZE.y, 0]]);
+  useSphericalJoint(bodyRef, legLRef, [[-BODY_HALF_SIZE.x * 0.5, -BODY_HALF_SIZE.y, 0], [0, LIMB_HALF_SIZE.y, 0]]);
+  useSphericalJoint(bodyRef, legRRef, [[BODY_HALF_SIZE.x * 0.5, -BODY_HALF_SIZE.y, 0], [0, LIMB_HALF_SIZE.y, 0]]);
+
   useEffect(() => {
-     if (torsoRef.current) {
-        // Вектор удара (назад от направления взгляда)
-        const kickX = Math.sin(rotation) * SHOTGUN_FORCE;
-        const kickZ = Math.cos(rotation) * SHOTGUN_FORCE;
-
-        torsoRef.current.applyImpulse({ 
-            x: kickX, 
-            y: SHOTGUN_LIFT,
-            z: kickZ 
-        }, true);
-
-        // Кручение для реалистичности падения
-        torsoRef.current.applyTorqueImpulse({ 
-            x: (Math.random() - 0.5) * 30, 
-            y: (Math.random() - 0.5) * 50, 
-            z: (Math.random() - 0.5) * 30 
-        }, true);
-     }
-  }, []);
-
-  // Камера следит за трупом
-  useFrame(() => {
-      if (torsoRef.current) {
-          const pos = torsoRef.current.translation();
-          const target = new Vector3(pos.x, pos.y, pos.z);
-          camera.lookAt(target);
-          const camTargetPos = target.clone().add(new Vector3(Math.sin(rotation) * 4, 2.5, Math.cos(rotation) * 4));
-          camera.position.lerp(camTargetPos, 0.1);
-      }
-  });
-
-  const bodyCommonProps = { 
-      colliders: "cuboid" as const, 
-      restitution: 0.2, // Немного упругости
-      friction: 1.0,    // Высокое трение, чтобы не скользил как лед
-      linearDamping: 0.1,
-      angularDamping: 0.1
-  };
-
-  const startPos = new Vector3(position.x, position.y + 0.9, position.z);
-  const q = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), rotation);
-
-  // Вспомогательная функция для рендера части модели или заглушки (если часть не найдена)
-  const RenderPart = ({ part, size, color }: { part: any, size: [number, number, number], color: string }) => {
-    if (part) {
-        // Сбрасываем трансформации части, так как она теперь управляется физикой
-        part.position.set(0, 0, 0);
-        part.rotation.set(0, 0, 0);
-        return <primitive object={part} />;
+    if (initialVelocity.lengthSq() > 0.0001) {
+        const refs = [bodyRef, headRef, armLRef, armRRef, legLRef, legRRef];
+        refs.forEach(ref => {
+            if(ref.current) ref.current.applyImpulse(initialVelocity, true);
+        });
     }
-    // Фолбэк на случай если модель другая
-    return (
-        <mesh castShadow>
-            <boxGeometry args={size} />
-            <meshStandardMaterial color={color} />
+  }, [initialVelocity]);
+
+  const BodyPart = ({ partRef, position, halfSize, model, visualOffset }: any) => (
+    <RigidBody 
+        ref={partRef} 
+        colliders={false} 
+        position={position} 
+        mass={2} 
+        friction={0.5}
+    >
+        <CuboidCollider args={[halfSize.x * 0.9, halfSize.y * 0.9, halfSize.z * 0.9]} />
+        <mesh>
+            <boxGeometry args={[halfSize.x * 2, halfSize.y * 2, halfSize.z * 2]} />
+            <meshBasicMaterial color="lime" wireframe visible={true} />
         </mesh>
-    );
-  };
+        {model && (
+            <group position={visualOffset}>
+                <primitive object={model} />
+            </group>
+        )}
+    </RigidBody>
+  );
 
   return (
-    <group position={startPos} quaternion={q}>
-      {/* TORSO */}
-      <RigidBody ref={torsoRef} {...bodyCommonProps} position={[0, 0, 0]}>
-        <RenderPart part={modelParts.body} size={[0.5, 0.75, 0.25]} color="#008a8a" />
-      </RigidBody>
-
-      {/* HEAD */}
-      <RigidBody ref={headRef} {...bodyCommonProps} position={[0, 0.625, 0]}>
-         {/* Смещение головы внутри коллайдера, если нужно, но primitive обычно центрируется */}
-         <group position={[0, -0.25, 0]}>
-            <RenderPart part={modelParts.head} size={[0.5, 0.5, 0.5]} color="#583e2f" />
-         </group>
-      </RigidBody>
-
-      {/* LEFT ARM */}
-      <RigidBody ref={leftArmRef} {...bodyCommonProps} position={[-0.375, 0, 0]}>
-        <group position={[0.125, -0.25, 0]}>
-            <RenderPart part={modelParts.armL} size={[0.25, 0.75, 0.25]} color="#8f6047" />
-        </group>
-      </RigidBody>
-
-      {/* RIGHT ARM */}
-      <RigidBody ref={rightArmRef} {...bodyCommonProps} position={[0.375, 0, 0]}>
-        <group position={[-0.125, -0.25, 0]}>
-            <RenderPart part={modelParts.armR} size={[0.25, 0.75, 0.25]} color="#8f6047" />
-        </group>
-      </RigidBody>
-
-      {/* LEFT LEG */}
-      <RigidBody ref={leftLegRef} {...bodyCommonProps} position={[-0.125, -0.75, 0]}>
-        <group position={[0, -0.25, 0]}>
-            <RenderPart part={modelParts.legL} size={[0.25, 0.75, 0.25]} color="#2d2d8d" />
-        </group>
-      </RigidBody>
-
-      {/* RIGHT LEG */}
-      <RigidBody ref={rightLegRef} {...bodyCommonProps} position={[0.125, -0.75, 0]}>
-         <group position={[0, -0.25, 0]}>
-            <RenderPart part={modelParts.legR} size={[0.25, 0.75, 0.25]} color="#2d2d8d" />
-         </group>
-      </RigidBody>
+    <group>
+        <BodyPart partRef={bodyRef} position={bodyPos} halfSize={BODY_HALF_SIZE} model={modelParts.body} visualOffset={relativePositions.body.clone().negate()} />
+        <BodyPart partRef={headRef} position={headPos} halfSize={HEAD_HALF_SIZE} model={modelParts.head} visualOffset={relativePositions.head.clone().negate()} />
+        <BodyPart partRef={armLRef} position={armLPos} halfSize={LIMB_HALF_SIZE} model={modelParts.armL} visualOffset={relativePositions.armL.clone().negate()} />
+        <BodyPart partRef={armRRef} position={armRPos} halfSize={LIMB_HALF_SIZE} model={modelParts.armR} visualOffset={relativePositions.armR.clone().negate()} />
+        <BodyPart partRef={legLRef} position={legLPos} halfSize={LIMB_HALF_SIZE} model={modelParts.legL} visualOffset={relativePositions.legL.clone().negate()} />
+        <BodyPart partRef={legRRef} position={legRPos} halfSize={LIMB_HALF_SIZE} model={modelParts.legR} visualOffset={relativePositions.legR.clone().negate()} />
     </group>
   );
 };
 
-// --- ОБЫЧНЫЙ ИГРОК ---
-const ActivePlayer = ({ 
-    isLocked, 
-    setIsRagdoll,
-    saveState 
-}: { 
-    isLocked: boolean, 
-    setIsRagdoll: (v: boolean) => void,
-    saveState: (pos: Vector3, rot: number) => void
-}) => {
+// --- ActivePlayer ---
+const ActivePlayer = ({ isLocked }: { isLocked: boolean }) => {
+  const rb = useRef<RapierRigidBody>(null);
   const meshRef = useRef<Group>(null);
-  const { camera } = useThree();
+  const { camera, scene } = useThree();
+  const { rapier, world } = useRapier();
   const controls = useKeyboardControls();
-  
-  const { scene, animations } = useGLTF(PLAYER_MODEL_URL);
+  const { scene: modelScene, animations = [] } = useGLTF(PLAYER_MODEL_URL);
   const { actions } = useAnimations(animations, meshRef);
-
+  
   const [headBone, setHeadBone] = useState<Object3D | null>(null);
   const [rightArmBone, setRightArmBone] = useState<Object3D | null>(null);
-
-  const [velocity] = useState(new Vector3(0, 0, 0));
-  const [isJumping, setIsJumping] = useState(false);
-  const [isEquipped, setIsEquipped] = useState(true);
+  
+  const [isEquipped, setIsEquipped] = useState(false);
+  const [modelOffset, setModelOffset] = useState(0); 
+  const [isFlying, setIsFlying] = useState(false);
+  
+  const currentCamHeightRef = useRef(1.4); 
   const lastEquipState = useRef(false);
-  const lastRagdollState = useRef(false);
-
+  const lastShootState = useRef(false);
+  const lastFlyState = useRef(false);
+  
   const rotationRef = useRef({ yaw: 0, pitch: 0 });
   const bodyYawRef = useRef(0);
-  const direction = new Vector3();
+  const raycaster = useMemo(() => new Raycaster(), []);
 
-  // Настройка костей для анимации головы и оружия
   useEffect(() => {
     let foundHead: Object3D | null = null;
-    let foundArm: Object3D | null = null;
-    scene.traverse((child) => {
+    let foundRightArm: Object3D | null = null;
+    modelScene.traverse((child) => {
         const name = child.name.toLowerCase();
         if (name === 'head') foundHead = child;
-        if (name.includes('right') && name.includes('arm')) foundArm = child;
+        if (name.includes('right') && name.includes('arm')) foundRightArm = child;
     });
     if (foundHead) setHeadBone(foundHead);
-    if (foundArm) setRightArmBone(foundArm);
-  }, [scene]);
+    if (foundRightArm) setRightArmBone(foundRightArm);
+  }, [modelScene]);
 
-  // Логика анимаций
+  // Логика стрельбы
+  useFrame(() => {
+    if (controls.shoot && !lastShootState.current && isEquipped && isLocked) {
+        raycaster.setFromCamera(new Vector2(0, 0), camera);
+        const intersects = raycaster.intersectObjects(scene.children, true);
+        const hit = intersects.find(i => {
+            let obj: Object3D | null = i.object;
+            while(obj) {
+                if (obj.userData && obj.userData.isMannequin) return true;
+                obj = obj.parent;
+            }
+            return false;
+        });
+        if (hit) {
+            let target = hit.object;
+            while(target && (!target.userData || !target.userData.isMannequin)) {
+                if(target.parent) target = target.parent;
+                else break;
+            }
+            if (target && target.userData.id) {
+                const forceVal = window.GAME_SETTINGS?.gunForce ?? 0;
+                const impulseDir = raycaster.ray.direction.clone().normalize().multiplyScalar(forceVal);
+                const event = new CustomEvent('MANNEQUIN_HIT', { detail: { id: target.userData.id, force: impulseDir } });
+                window.dispatchEvent(event);
+            }
+        }
+    }
+    lastShootState.current = controls.shoot;
+  });
+
+  // Логика переключения полета (F)
+  useEffect(() => {
+    if (controls.toggleFly && !lastFlyState.current) {
+        setIsFlying(prev => !prev);
+    }
+    lastFlyState.current = controls.toggleFly;
+  }, [controls.toggleFly]);
+
+  // Анимации
   useEffect(() => {
     const isMoving = controls.forward || controls.backward || controls.left || controls.right;
-    const legsAnim = actions['walk'];
-    const idleAnim = actions['idle']; 
-    const armsWalkAnim = actions['hand_walk']; 
-    const pistolAnim = actions['pistol'];
+    const isCrouching = controls.crouch;
+    const isAiming = controls.aim && isEquipped;
+    const getAction = (name: string) => actions[name] || Object.values(actions).find((a: any) => a?.getClip().name.toLowerCase() === name.toLowerCase()) || null;
 
-    const play = (action: any) => { if (action && !action.isRunning()) action.reset().fadeIn(0.2).play(); };
-    const fade = (action: any) => action?.fadeOut(0.2);
+    const legsAnim = getAction('walk');
+    const idleAnim = getAction('idle'); 
+    const armsWalkAnim = getAction('hand_walk'); 
+    const pistolAnim = getAction('pistol'); 
+    const pistolAimAnim = getAction('pistol_aim'); 
+    const crouchIdleAnim = getAction('shift'); 
+    const crouchWalkAnim = getAction('shift_walk'); 
 
-    if (isMoving) {
-        if (legsAnim) { play(legsAnim); legsAnim.timeScale = controls.crouch ? 1.0 : 1.5; }
-        if (isEquipped) {
-            if (pistolAnim) { play(pistolAnim); fade(armsWalkAnim); fade(idleAnim); }
-            else fade(armsWalkAnim);
-        } else {
-            fade(pistolAnim);
-            if (armsWalkAnim) { play(armsWalkAnim); armsWalkAnim.timeScale = controls.crouch ? 1.0 : 1.5; }
+    if (pistolAimAnim) pistolAimAnim.setLoop(LoopRepeat, Infinity);
+    if (pistolAnim) pistolAnim.setLoop(LoopRepeat, Infinity);
+    
+    const play = (action: any, timeScale = 1.0) => { 
+        if (action) {
+            action.setEffectiveTimeScale(timeScale);
+            action.setEffectiveWeight(1);
+            if (!action.isRunning()) action.reset().fadeIn(0.1).play(); 
         }
-        if (!isEquipped) fade(idleAnim); 
+    };
+    const fade = (action: any) => action?.fadeOut(0.1);
+
+    if (isFlying) {
+        if (legsAnim) play(legsAnim, 2.0); 
+        fade(crouchIdleAnim); fade(crouchWalkAnim);
+        if (isEquipped && pistolAnim) play(pistolAnim);
+        else fade(pistolAnim);
+        fade(idleAnim);
+    } else if (isCrouching) {
+        if (isMoving) { if (crouchWalkAnim) play(crouchWalkAnim); fade(crouchIdleAnim); } else { if (crouchIdleAnim) play(crouchIdleAnim); fade(crouchWalkAnim); }
+        if (isEquipped) { if (isAiming && pistolAimAnim) { play(pistolAimAnim); fade(pistolAnim); } else if ( pistolAnim) { play(pistolAnim); fade(pistolAimAnim); } fade(armsWalkAnim); } else { fade(pistolAnim); fade(pistolAimAnim); }
+        fade(legsAnim); fade(idleAnim); if (!isEquipped) fade(armsWalkAnim);
     } else {
-        fade(legsAnim); fade(armsWalkAnim);
-        if (isEquipped && pistolAnim) { play(pistolAnim); fade(idleAnim); }
-        else { fade(pistolAnim); if (idleAnim) play(idleAnim); }
+        fade(crouchIdleAnim); fade(crouchWalkAnim);
+        if (isMoving) {
+            if (legsAnim) play(legsAnim, 1.5);
+            if (isEquipped) { if (isAiming && pistolAimAnim) { play(pistolAimAnim); fade(pistolAnim); } else if (pistolAnim) { play(pistolAnim); fade(pistolAimAnim); } fade(armsWalkAnim); fade(idleAnim); } else { fade(pistolAnim); fade(pistolAimAnim); if (armsWalkAnim) play(armsWalkAnim, 1.5); }
+            if (!isEquipped) fade(idleAnim); 
+        } else {
+            fade(legsAnim); fade(armsWalkAnim);
+            if (isEquipped) { if (isAiming && pistolAimAnim) { play(pistolAimAnim); fade(pistolAnim); } else if (pistolAnim) { play(pistolAnim); fade(pistolAimAnim); } fade(idleAnim); } else { fade(pistolAnim); fade(pistolAimAnim); if (idleAnim) play(idleAnim); }
+        }
     }
-  }, [controls, actions, isEquipped]);
+  }, [controls, actions, isEquipped, isFlying]);
 
-  // Экипировка
-  useEffect(() => {
-    if (controls.equip && !lastEquipState.current) setIsEquipped(prev => !prev);
-    lastEquipState.current = controls.equip;
-  }, [controls.equip]);
+  useEffect(() => { if (controls.equip && !lastEquipState.current) setIsEquipped(prev => !prev); lastEquipState.current = controls.equip; }, [controls.equip]);
 
-  // Включение Ragdoll
-  useEffect(() => {
-      if (controls.ragdoll && !lastRagdollState.current) {
-          if (meshRef.current) {
-            saveState(meshRef.current.position.clone(), bodyYawRef.current);
-          }
-          setIsRagdoll(true);
-      }
-      lastRagdollState.current = controls.ragdoll;
-  }, [controls.ragdoll, setIsRagdoll, saveState]);
-
-  // Вращение камерой
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isLocked) return;
-      const sensitivity = 0.002;
+      const isAiming = controls.aim && isEquipped;
+      const sensitivity = isAiming ? 0.0005 : 0.002;
       rotationRef.current.yaw -= e.movementX * sensitivity;
       rotationRef.current.pitch += e.movementY * sensitivity;
       rotationRef.current.pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, rotationRef.current.pitch));
     };
     document.addEventListener('mousemove', handleMouseMove);
     return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [isLocked]);
+  }, [isLocked, controls.aim, isEquipped]);
 
-  // Основной цикл движения
+  // --- MAIN LOOP ---
   useFrame((state, delta) => {
-    if (!meshRef.current) return;
+    if (!rb.current) return;
 
     const cameraYaw = rotationRef.current.yaw;
     const cameraPitch = rotationRef.current.pitch;
+    
+    // 1. POSITION SYNC FOR UI/LOGIC
+    const playerPos = rb.current.translation();
+    const vecPos = new Vector3(playerPos.x, playerPos.y, playerPos.z);
+    
+    const angleToCenter = Math.atan2(0 - vecPos.x, 0 - vecPos.z);
+    const compassRotation = angleToCenter - cameraYaw;
+    window.dispatchEvent(new CustomEvent('COMPASS_UPDATE', { detail: compassRotation }));
+
+    // 2. MOVEMENT CALC
     const isMoving = controls.forward || controls.backward || controls.left || controls.right;
-    const speed = controls.crouch ? WALK_SPEED : RUN_SPEED;
+    const isAiming = controls.aim && isEquipped;
+    
+    let speed = controls.crouch ? WALK_SPEED : RUN_SPEED;
+    if (isFlying) {
+        speed = controls.boost ? SUPER_SPEED : FLY_SPEED;
+    }
+
+    const targetFov = isAiming ? 25 : (controls.boost && isFlying ? 80 : 50);
+    if (camera instanceof PerspectiveCamera) {
+      camera.fov = MathUtils.lerp(camera.fov, targetFov, delta * 12);
+      camera.updateProjectionMatrix();
+    }
 
     const frontVector = new Vector3(0, 0, Number(controls.backward) - Number(controls.forward));
     const sideVector = new Vector3(Number(controls.left) - Number(controls.right), 0, 0);
-    direction.subVectors(frontVector, sideVector).normalize();
-    direction.applyAxisAngle(new Vector3(0, 1, 0), cameraYaw);
-    direction.multiplyScalar(speed * delta);
-    meshRef.current.position.add(direction);
-
-    // Поворот тела
-    if (isMoving) {
-        const diff = normalizeAngle(cameraYaw - bodyYawRef.current);
-        bodyYawRef.current += diff * 10 * delta; 
+    const direction = new Vector3().subVectors(frontVector, sideVector).normalize();
+    
+    if (isFlying) {
+        direction.applyQuaternion(camera.quaternion);
     } else {
-        let diff = normalizeAngle(cameraYaw - bodyYawRef.current);
-        if (diff > HEAD_YAW_LIMIT) bodyYawRef.current = cameraYaw - HEAD_YAW_LIMIT;
-        else if (diff < -HEAD_YAW_LIMIT) bodyYawRef.current = cameraYaw + HEAD_YAW_LIMIT;
+        direction.applyAxisAngle(new Vector3(0, 1, 0), cameraYaw);
     }
-    meshRef.current.rotation.y = bodyYawRef.current;
+    
+    const moveVel = direction.multiplyScalar(speed);
 
-    // Поворот головы (кости)
+    // 3. PHYSICS APPLY
+    const currentVel = rb.current.linvel();
+    
+    // Ground Check Raycast (from center downwards)
+    // Capsule height ~1.8m (0.9 half height). Center is at ~0.9m.
+    // Cast from center downwards.
+    
+    const rayOrigin = { x: vecPos.x, y: vecPos.y, z: vecPos.z }; 
+    const rayDir = { x: 0, y: -1, z: 0 };
+    const ray = new rapier.Ray(rayOrigin, rayDir);
+    // castRay(ray, maxToi, solid)
+    // We expect ground around 0.9 distance (half height)
+    const hit = world.castRay(ray, 2.0, true); 
+    
+    // A primitive ground check: if hit distance is approx half height (+ tolerance)
+    // We assume capsule half-height is 0.6 + radius 0.3 = 0.9 total extent from center.
+    // If distance < 0.95, we are grounded.
+    let isGrounded = false;
+    if (hit && hit.toi < 1.0) {
+        isGrounded = true;
+    }
+
+    let nextVelY = currentVel.y;
+
+    if (isFlying) {
+        nextVelY = 0;
+        if (controls.jump) nextVelY = speed;
+        if (controls.crouch) nextVelY = -speed;
+        rb.current.setGravityScale(0, true);
+    } else {
+        rb.current.setGravityScale(1, true);
+        if (controls.jump && isGrounded) {
+             nextVelY = JUMP_FORCE;
+        }
+    }
+
+    rb.current.setLinvel({ x: moveVel.x, y: nextVelY, z: moveVel.z }, true);
+
+    // 4. MODEL ANIMATION & ROTATION
+    const targetOffset = (controls.crouch && !isFlying) ? -0.15 : 0;
+    const newOffset = MathUtils.lerp(modelOffset, targetOffset, 0.1);
+    setModelOffset(newOffset);
+
+    if (isEquipped) {
+        const diff = normalizeAngle(cameraYaw - bodyYawRef.current);
+        const turnSpeed = isAiming ? 25 : 15;
+        bodyYawRef.current += diff * turnSpeed * delta; 
+    } else {
+        if (isMoving) {
+            const diff = normalizeAngle(cameraYaw - bodyYawRef.current);
+            bodyYawRef.current += diff * 10 * delta; 
+        } else {
+            let diff = normalizeAngle(cameraYaw - bodyYawRef.current);
+            if (diff > HEAD_YAW_LIMIT) bodyYawRef.current = cameraYaw - HEAD_YAW_LIMIT;
+            else if (diff < -HEAD_YAW_LIMIT) bodyYawRef.current = cameraYaw + HEAD_YAW_LIMIT;
+        }
+    }
+
+    // Apply rotation to mesh group, NOT rigid body
+    if (meshRef.current) {
+        meshRef.current.rotation.y = bodyYawRef.current;
+    }
     if (headBone) {
         headBone.rotation.y = normalizeAngle(cameraYaw - bodyYawRef.current);
         headBone.rotation.x = -cameraPitch; 
     }
 
-    // Гравитация и прыжки (простая кинематика)
-    let currentY = meshRef.current.position.y;
-    let newVelocityY = velocity.y;
-    if (controls.jump && !isJumping) {
-      newVelocityY = JUMP_FORCE;
-      setIsJumping(true);
-    }
-    newVelocityY -= GRAVITY * delta;
-    currentY += newVelocityY * delta;
-    if (currentY < 0) {
-      currentY = 0;
-      newVelocityY = 0;
-      setIsJumping(false);
-    }
-    meshRef.current.position.y = currentY;
-    velocity.y = newVelocityY;
-
-    // Камера от 3-го лица
-    const playerPos = meshRef.current.position;
-    const targetCamHeight = controls.crouch ? 1.0 : 1.4; 
+    // 5. CAMERA SYNC
+    const targetHeight = (controls.crouch && !isFlying) ? 1.0 : 1.4; 
+    currentCamHeightRef.current = MathUtils.lerp(currentCamHeightRef.current, targetHeight, delta * 5);
+    const camHeight = currentCamHeightRef.current;
     const offsetX = Math.cos(cameraYaw) * CAMERA_RIGHT_OFFSET;
     const offsetZ = -Math.sin(cameraYaw) * CAMERA_RIGHT_OFFSET;
     
-    camera.position.x = playerPos.x + offsetX + Math.sin(cameraYaw) * Math.cos(cameraPitch) * CAMERA_DISTANCE;
-    camera.position.y = playerPos.y + targetCamHeight + Math.sin(cameraPitch) * CAMERA_DISTANCE;
-    camera.position.z = playerPos.z + offsetZ + Math.cos(cameraYaw) * Math.cos(cameraPitch) * CAMERA_DISTANCE;
-    camera.lookAt(playerPos.x + offsetX, playerPos.y + targetCamHeight, playerPos.z + offsetZ);
+    camera.position.x = vecPos.x + offsetX + Math.sin(cameraYaw) * Math.cos(cameraPitch) * CAMERA_DISTANCE;
+    camera.position.y = vecPos.y + camHeight + Math.sin(cameraPitch) * CAMERA_DISTANCE;
+    camera.position.z = vecPos.z + offsetZ + Math.cos(cameraYaw) * Math.cos(cameraPitch) * CAMERA_DISTANCE;
+    camera.lookAt(vecPos.x + offsetX, vecPos.y + camHeight, vecPos.z + offsetZ);
   });
 
   return (
-    <group ref={meshRef} position={[0, 0, 0]}>
-        <primitive object={scene} scale={0.66} castShadow />
-        {rightArmBone && isEquipped && createPortal(<WeaponRenderer />, rightArmBone)}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+    // Capsule: half-height 0.6, radius 0.3 -> Total height 1.8m.
+    <RigidBody 
+        ref={rb} 
+        colliders={false} 
+        mass={80} 
+        type="dynamic" 
+        position={[0, 10, 0]} 
+        enabledRotations={[false, false, false]} // Lock rotation so player doesn't tip over
+        friction={0} // Zero friction for walls so we don't stick
+    >
+        <CapsuleCollider args={[0.6, 0.3]} />
+        
+        {/* Visual Mesh Group inside RigidBody, so it moves with physics */}
+        {/* We need to offset the model so feet align with bottom of capsule */}
+        {/* Capsule total height 1.8, center at 0. Bottom is -0.9. Model origin is usually at feet. */}
+        {/* So we shift model down by 0.9 */}
+        <group ref={meshRef} position={[0, -0.9 + modelOffset, 0]}>
+            <primitive object={modelScene} scale={0.66} castShadow />
+            {rightArmBone && isEquipped && createPortal(<WeaponRenderer />, rightArmBone)}
+        </group>
+        
+        {/* Shadow blob at feet */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.85, 0]}>
              <circleGeometry args={[0.25, 32]} />
              <meshBasicMaterial color="black" transparent opacity={0.4} />
         </mesh>
-    </group>
+    </RigidBody>
   );
 };
 
 export const Player: React.FC<PlayerProps> = ({ isLocked }) => {
-    const [isRagdoll, setIsRagdoll] = useState(false);
-    const [lastPos, setLastPos] = useState(new Vector3(0, 0, 0));
-    const [lastRot, setLastRot] = useState(0);
-    const controls = useKeyboardControls();
-    const lastR = useRef(false);
-    
-    // Переключение обратно (опционально, на ту же кнопку R)
-    useEffect(() => {
-        if (controls.ragdoll && !lastR.current && isRagdoll) setIsRagdoll(false);
-        lastR.current = controls.ragdoll;
-    }, [controls.ragdoll, isRagdoll]);
-
-    // Важно: Мы используем условие рендера, потому что переключение между 
-    // кинематическим контроллером и динамическим Ragdoll требует разных RigidBody
-    if (isRagdoll) return <Ragdoll position={lastPos} rotation={lastRot} />;
-
     return (
-        <ActivePlayer 
-            isLocked={isLocked} 
-            setIsRagdoll={setIsRagdoll} 
-            saveState={(p, r) => { setLastPos(p); setLastRot(r); }}
-        />
+        <ActivePlayer isLocked={isLocked} />
     );
 };
 
