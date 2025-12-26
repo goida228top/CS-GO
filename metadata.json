@@ -1,0 +1,5 @@
+{
+  "name": "Box Walker 3D",
+  "description": "A simple 3D 3rd-person walking simulator where you play as a rectangular box.",
+  "requestFramePermissions": []
+}
