@@ -5,6 +5,8 @@ import { MapModel } from './MapModel';
 import { Mannequin } from './Mannequin';
 import { PhysicsDragger } from './PhysicsDragger';
 import { ModMenu } from './ModMenu';
+import { NetworkPlayer } from './NetworkPlayer'; // IMPORT
+import { socketManager } from './SocketManager'; // IMPORT
 import './gameConfig'; 
 import { MAP_URL, BULLET_GRAVITY, BULLET_LIFETIME, MAX_DECALS } from './constants';
 import { Bullet, Decal } from './types';
@@ -187,6 +189,63 @@ interface WorldProps {
 }
 
 export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
+  const [networkPlayers, setNetworkPlayers] = useState<any[]>([]);
+
+  // SOCKET LISTENER
+  useEffect(() => {
+      if (!socketManager.socket) return;
+
+      const updatePlayers = () => {
+          const others = Object.values(socketManager.otherPlayers || {});
+          setNetworkPlayers([...others]);
+      };
+
+      // Listen to events that change player list
+      socketManager.socket.on('player_joined', (p) => {
+          console.log("Player joined:", p);
+          socketManager.otherPlayers[p.id] = p;
+          updatePlayers();
+      });
+
+      socketManager.socket.on('current_players', (players) => {
+          console.log("Got existing players:", players);
+          // Remove self from list
+          const others: any = {};
+          Object.values(players).forEach((p: any) => {
+             if(p.id !== socketManager.socket?.id) others[p.id] = p;
+          });
+          socketManager.otherPlayers = others;
+          updatePlayers();
+      });
+
+      socketManager.socket.on('player_left', ({ id }) => {
+          delete socketManager.otherPlayers[id];
+          updatePlayers();
+      });
+
+      // For movement, we usually update the ref directly in NetworkPlayer via event,
+      // but here we are using a simple state for the list.
+      // We need to pass the movement data down.
+      socketManager.socket.on('player_moved', (data) => {
+          if (socketManager.otherPlayers[data.id]) {
+              socketManager.otherPlayers[data.id].position = data.pos;
+              socketManager.otherPlayers[data.id].rotation = data.rot;
+              // Force re-render not needed for every frame if we used refs, 
+              // but we are using state for the list. 
+              // Optimization: We will let NetworkPlayer handle its own interpolation
+              // But we need to update the state to trigger prop updates.
+              setNetworkPlayers(Object.values(socketManager.otherPlayers));
+          }
+      });
+
+      return () => {
+          socketManager.socket?.off('player_joined');
+          socketManager.socket?.off('current_players');
+          socketManager.socket?.off('player_left');
+          socketManager.socket?.off('player_moved');
+      };
+  }, []);
+
   return (
     <group>
       <color attach="background" args={['#000000']} />
@@ -205,6 +264,20 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
         <MapModel />
       </Suspense>
 
+      {/* RENDER NETWORK PLAYERS */}
+      {networkPlayers.map((p) => (
+          <NetworkPlayer 
+            key={p.id}
+            id={p.id}
+            position={p.position}
+            rotation={p.rotation}
+            color={p.avatarColor}
+            nickname={p.nickname}
+            team={p.team}
+            weapon={p.weapon}
+          />
+      ))}
+
       {gameMode === 'training' && (
           <>
             <Mannequin id="dummy-1" position={[-19.27, 2.90, -23.39]} />
@@ -218,7 +291,6 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
       
       <BulletSystem />
       
-      {/* Show ModMenu in training or if isDev */}
       <ModMenu isDev={isDev} gameMode={gameMode} />
     </group>
   );

@@ -7,6 +7,7 @@ import { WeaponRenderer } from './WeaponRenderer';
 import { SkeletonUtils } from 'three-stdlib';
 import { soundManager } from './SoundGenerator';
 import { RigidBody, CapsuleCollider, RapierRigidBody } from '@react-three/rapier';
+import { socketManager } from './SocketManager'; // IMPORT SOCKET MANAGER
 
 // No import BuyMenu here anymore
 import { 
@@ -126,6 +127,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   
   const reloadTimerRef = useRef<number | null>(null);
 
+  // Throttling network updates
+  const lastNetworkUpdate = useRef(0);
+
   const rotationRef = useRef({ yaw: 0, pitch: 0 });
   const bodyYawRef = useRef(0);
   const mapObjectRef = useRef<Object3D | null>(null);
@@ -217,14 +221,25 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
+    const now = Date.now();
     
-    // --- POS UPDATE FOR HUD ---
+    // --- POS UPDATE FOR HUD & NETWORK ---
     if (meshRef.current) {
         const p = meshRef.current.position;
-        // Dispatch raw data, throttle if needed but 60fps events are usually fine for local HUD
+        // HUD Update
         window.dispatchEvent(new CustomEvent('HUD_POS_UPDATE', { 
             detail: { x: p.x, y: p.y, z: p.z } 
         }));
+
+        // Network Update (Send 20 times per second)
+        if (socketManager.socket && now - lastNetworkUpdate.current > 50) {
+             socketManager.updatePosition(
+                 { x: p.x, y: p.y, z: p.z }, 
+                 bodyYawRef.current,
+                 currentWeaponId
+             );
+             lastNetworkUpdate.current = now;
+        }
     }
 
     // Shooting Logic
@@ -246,6 +261,16 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             setShootTrigger(c => c + 1);
             setAmmo(a => a - 1);
             soundManager.playShoot();
+            
+            // Network Shoot
+            if(socketManager.socket) {
+                 const origin = camera.position.clone();
+                 const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+                 socketManager.socket.emit('shoot', {
+                     origin: { x: origin.x, y: origin.y, z: origin.z },
+                     direction: { x: direction.x, y: direction.y, z: direction.z }
+                 });
+            }
 
             const origin = camera.position.clone();
             const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
@@ -306,16 +331,13 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   
   useEffect(() => { 
       if (controls.toggleFly && !lastFlyState.current) { 
-          // Check: Can we fly? (Training mode OR Dev Mode enabled)
-          // We don't have gameMode prop here easily without refactor, 
-          // BUT we can use localStorage check or assume prop was passed.
-          // Let's assume user is honest or using dev mode. 
-          // For proper React pattern, we should pass gameMode, but to save file chars:
           const isDev = localStorage.getItem('dev_mode') === 'true';
-          // NOTE: In a real app, pass gameMode as prop. Here we assume training is default or user is dev.
-          // Just simplistic check:
-          setIsFlying(p => !p); 
-          velocityRef.current.set(0,0,0); 
+          // Only allow fly toggle if Dev or Training mode (We assume app passes correct logic, here just simple check)
+          // Since gameMode isn't prop here, relying on isDev or Cheat Menu for online fairness
+          if (isDev) {
+              setIsFlying(p => !p); 
+              velocityRef.current.set(0,0,0); 
+          }
       } 
       lastFlyState.current = controls.toggleFly; 
   }, [controls.toggleFly]);

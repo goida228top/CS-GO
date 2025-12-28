@@ -13,10 +13,12 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
     // Cheats State
     const [wallhack, setWallhack] = useState(false);
     const [aimbot, setAimbot] = useState(false);
-    const [canFly, setCanFly] = useState(false);
-
+    
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore key repeats to prevent flickering
+            if (e.repeat) return;
+
             // Training mode -> 'M' key
             if (gameMode === 'training' && e.code === 'KeyM') {
                 setVisible(v => !v);
@@ -25,32 +27,26 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
 
             // Dev Mode -> Left Shift
             if (isDev && e.code === 'ShiftLeft') {
-                // If we are holding shift for crouch, we don't want to spam menu,
-                // but user asked for "Left Shift opens cheat menu".
-                // Let's implement toggle on press.
                 setVisible(v => !v);
             }
         };
         
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        // Use document instead of window for better capture in iframes/canvas
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isDev, gameMode]);
 
     // Apply Cheats
     useEffect(() => {
-        window.GAME_SETTINGS.showHitboxes = wallhack;
-        window.dispatchEvent(new Event('SETTINGS_CHANGED'));
+        if (typeof window !== 'undefined' && window.GAME_SETTINGS) {
+            window.GAME_SETTINGS.showHitboxes = wallhack;
+            window.dispatchEvent(new Event('SETTINGS_CHANGED'));
+        }
     }, [wallhack]);
-
-    // We use a global variable or event for flying, let's update a setting or dispatch event
-    // For now, let's make fly toggleable via key V in ActivePlayer if logic allows,
-    // but here we just update a visual state or global flag.
-    // Hack: We'll overwrite the 'training' mode check in ActivePlayer logic via a global flag if needed,
-    // but better to just use the UI.
 
     const updateForce = (val: number) => {
         setForce(val);
-        window.GAME_SETTINGS.gunForce = val;
+        if (window.GAME_SETTINGS) window.GAME_SETTINGS.gunForce = val;
     };
 
     const respawn = () => {
@@ -60,8 +56,8 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
     if (!visible) return null;
 
     return (
-        <Html fullscreen style={{ pointerEvents: 'none' }}>
-            <div className="absolute top-1/2 left-20 -translate-y-1/2 w-80 bg-black/95 text-white p-6 rounded-xl border-2 border-red-600 pointer-events-auto font-mono text-sm z-50 shadow-[0_0_50px_rgba(220,38,38,0.5)]">
+        <Html fullscreen style={{ pointerEvents: 'none', zIndex: 1000 }}>
+            <div className="absolute top-1/2 left-20 -translate-y-1/2 w-80 bg-black/95 text-white p-6 rounded-xl border-2 border-red-600 pointer-events-auto font-mono text-sm shadow-[0_0_50px_rgba(220,38,38,0.5)]">
                 
                 <div className="flex justify-between items-center mb-6 border-b border-red-800 pb-2">
                     <h2 className="text-2xl font-black text-red-500 italic tracking-widest">

@@ -11,6 +11,7 @@ import { PointerLocker } from './PointerLocker';
 import { HUD } from './HUD';
 import { BuyMenu } from './BuyMenu';
 import { PlayerProfile, Team } from './types';
+import { socketManager } from './SocketManager'; // IMPORT
 
 // Helper to safely request lock without throwing unhandled rejections
 const safeRequestLock = () => {
@@ -52,6 +53,7 @@ const App: React.FC = () => {
       const handleKeyDown = (e: KeyboardEvent) => {
           if (e.code === 'ShiftLeft') {
               const now = Date.now();
+              // < 500ms between presses
               if (now - lastShiftTime.current < 500) {
                   shiftCounter.current++;
               } else {
@@ -105,12 +107,17 @@ const App: React.FC = () => {
   const handleTeamSelected = (team: Team) => {
       setUserProfile(prev => ({ ...prev, team }));
       setShowTeamSelect(false);
-      startGame();
+      startGame(true); // Is Online
   };
 
-  const startGame = () => {
+  const startGame = (online = false) => {
       setGameStarted(true);
       safeRequestLock();
+      
+      // Connect to server if it's an online mode
+      if (online || gameMode === 'duel' || gameMode === 'tdm') {
+          socketManager.connect(userProfile);
+      }
   };
   
   const handleBuyMenuToggle = (isOpen: boolean) => {
