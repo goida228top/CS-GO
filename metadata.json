@@ -1,0 +1,5 @@
+{
+  "name": "CS-GO",
+  "description": "A simple 3D 3rd-person walking simulator where you play as a rectangular box.",
+  "requestFramePermissions": []
+}
