@@ -1,42 +1,9 @@
-
 import React, { useState } from 'react';
+import { PlayerProfile } from './types';
 
 interface MainMenuProps {
-    onPlay: () => void;
+    onPlay: (modeId: string, profile: PlayerProfile) => void;
 }
-
-/**
- * --- ОПИСАНИЕ ИГРОВЫХ РЕЖИМОВ (ПЛАН) ---
- * 
- * 1. ЗАКЛАДКА БОМБЫ (BOMB DEFUSAL)
- *    - Тип: Командный (Terrorists vs Counter-Terrorists).
- *    - Игроки: Любое четное кол-во до 10 (2, 4, 6, 8, 10).
- *    - Правила:
- *      - 8 раундов (смена сторон или до победы в 5? решим позже).
- *      - Permadeath (смерть окончательна до конца раунда).
- *      - Цель T: Поставить бомбу и защитить до взрыва ИЛИ убить всех CT.
- *      - Цель CT: Обезвредить бомбу ИЛИ убить всех T (если бомба не стоит).
- *      
- * 2. ДУЭЛЬ (DUEL)
- *    - Тип: 1 на 1.
- *    - Игроки: Строго 2.
- *    - Правила:
- *      - Без задач (бомб/флагов).
- *      - Доступен весь арсенал.
- *      - Побеждает тот, кто первым наберет N убийств или выиграет N раундов.
- * 
- * 3. КОМАНДНЫЙ БОЙ (TEAM DEATHMATCH)
- *    - Тип: Командный.
- *    - Игроки: Любое четное кол-во до 10.
- *    - Правила:
- *      - Таймер матча: 15 минут.
- *      - Респаун: Через 3 секунды после смерти (бесконечные жизни).
- *      - Цель: Команда с большим количеством убийств по истечении времени побеждает.
- * 
- * 4. ТРЕНИРОВКА (TRAINING) - [АКТИВЕН СЕЙЧАС]
- *    - Тип: Одиночный (Sandbox).
- *    - Цель: Тест механик, стрельба по манекенам, изучение карты.
- */
 
 type GameModeId = 'bomb' | 'duel' | 'tdm' | 'training';
 
@@ -61,7 +28,7 @@ const GAME_MODES: GameModeDef[] = [
         title: 'ДУЭЛЬ 1x1',
         description: 'Чистый скилл. Никаких помех. Только ты и твой противник.',
         players: '2 ИГРОКА',
-        locked: true
+        locked: false
     },
     {
         id: 'tdm',
@@ -79,9 +46,26 @@ const GAME_MODES: GameModeDef[] = [
     }
 ];
 
+const AVATAR_COLORS = [
+    '#ef4444', // Red
+    '#f97316', // Orange
+    '#eab308', // Yellow
+    '#22c55e', // Green
+    '#06b6d4', // Cyan
+    '#3b82f6', // Blue
+    '#a855f7', // Purple
+    '#ec4899', // Pink
+    '#ffffff', // White
+    '#111111', // Black
+];
+
 export const MainMenu: React.FC<MainMenuProps> = ({ onPlay }) => {
     const [view, setView] = useState<'main' | 'settings' | 'gamemodes'>('main');
     const [hitboxes, setHitboxes] = useState(() => window.GAME_SETTINGS.showHitboxes);
+    
+    // Profile State
+    const [nickname, setNickname] = useState('Player');
+    const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[5]); // Default Blue
 
     const toggleHitboxes = () => {
         const newVal = !hitboxes;
@@ -92,29 +76,64 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onPlay }) => {
 
     const handleModeSelect = (mode: GameModeDef) => {
         if (mode.locked) return;
-        // В будущем здесь мы будем передавать ID режима в App.tsx
-        // Пока что просто запускаем текущую игру (Тренировка)
-        onPlay();
+        if (!nickname.trim()) {
+            alert("Пожалуйста, введите никнейм!");
+            return;
+        }
+        
+        onPlay(mode.id, {
+            nickname: nickname,
+            avatarColor: selectedColor
+        });
     };
 
     const renderMainScreen = () => (
-        <div className="flex flex-col items-center gap-6 animate-fade-in-up">
-            <h1 className="text-6xl font-black mb-8 text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-cyan-400 drop-shadow-[0_0_10px_rgba(132,204,22,0.5)]">
+        <div className="flex flex-col items-center gap-6 animate-fade-in-up w-full max-w-md">
+            <h1 className="text-6xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-cyan-400 drop-shadow-[0_0_10px_rgba(132,204,22,0.5)]">
                 BOX WALKER 3D
             </h1>
             
+            {/* PROFILE SECTION */}
+            <div className="w-full bg-black/50 border border-gray-700 p-6 rounded-lg mb-4 flex flex-col gap-4">
+                <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-400 uppercase font-bold tracking-wider">Никнейм</label>
+                    <input 
+                        type="text" 
+                        value={nickname}
+                        onChange={(e) => setNickname(e.target.value)}
+                        maxLength={16}
+                        className="bg-gray-900 border border-gray-600 text-white px-3 py-2 rounded focus:border-lime-500 outline-none font-bold text-center tracking-wider text-lg"
+                        placeholder="ENTER NAME"
+                    />
+                </div>
+
+                <div className="flex flex-col gap-2 items-center">
+                    <label className="text-xs text-gray-400 uppercase font-bold tracking-wider">Аватар</label>
+                    <div className="flex gap-2 justify-center flex-wrap">
+                        {AVATAR_COLORS.map(color => (
+                            <div 
+                                key={color}
+                                onClick={() => setSelectedColor(color)}
+                                className={`w-8 h-8 rounded-full cursor-pointer transition-transform hover:scale-110 border-2 ${selectedColor === color ? 'border-white scale-110 shadow-[0_0_10px_white]' : 'border-transparent'}`}
+                                style={{ backgroundColor: color }}
+                            />
+                        ))}
+                    </div>
+                </div>
+            </div>
+
             <button 
                 onClick={() => setView('gamemodes')}
-                className="w-64 py-4 text-xl font-bold border-2 border-lime-500 text-lime-400 hover:bg-lime-500 hover:text-black transition-all duration-200 uppercase tracking-widest shadow-[0_0_15px_rgba(132,204,22,0.3)] hover:shadow-[0_0_25px_rgba(132,204,22,0.6)]"
+                className="w-full py-4 text-xl font-bold border-2 border-lime-500 text-lime-400 hover:bg-lime-500 hover:text-black transition-all duration-200 uppercase tracking-widest shadow-[0_0_15px_rgba(132,204,22,0.3)] hover:shadow-[0_0_25px_rgba(132,204,22,0.6)]"
             >
-                PLAY
+                ИГРАТЬ
             </button>
             
             <button 
                 onClick={() => setView('settings')}
-                className="w-64 py-3 text-lg font-bold border-2 border-gray-600 text-gray-400 hover:border-white hover:text-white transition-all duration-200 uppercase tracking-widest"
+                className="w-full py-3 text-lg font-bold border-2 border-gray-600 text-gray-400 hover:border-white hover:text-white transition-all duration-200 uppercase tracking-widest"
             >
-                SETTINGS
+                НАСТРОЙКИ
             </button>
         </div>
     );

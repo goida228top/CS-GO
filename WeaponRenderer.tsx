@@ -11,7 +11,7 @@ interface WeaponRendererProps {
     inspectTrigger?: number;
 }
 
-export const WeaponRenderer = ({ weaponId, shootTrigger = 0, reloadTrigger = 0, inspectTrigger = 0 }: WeaponRendererProps) => {
+export const WeaponRenderer: React.FC<WeaponRendererProps> = ({ weaponId, shootTrigger = 0, reloadTrigger = 0, inspectTrigger = 0 }) => {
   const group = useRef<any>(null);
   
   const weaponData = WEAPONS_DATA[weaponId];

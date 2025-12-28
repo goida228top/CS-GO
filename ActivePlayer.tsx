@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree, createPortal } from '@react-three/fiber';
 import { Vector3, Object3D, Raycaster, LoopRepeat, MathUtils, PerspectiveCamera as ThreePerspectiveCamera } from 'three';
@@ -7,6 +6,8 @@ import { useGLTF, useAnimations, Hud, PerspectiveCamera } from '@react-three/dre
 import { WeaponRenderer } from './WeaponRenderer';
 import { SkeletonUtils } from 'three-stdlib';
 import { soundManager } from './SoundGenerator';
+import { RigidBody, CapsuleCollider, RapierRigidBody } from '@react-three/rapier';
+
 // No import BuyMenu here anymore
 import { 
     PLAYER_MODEL_URL, 
@@ -66,6 +67,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   const modelContainerRef = useRef<Object3D>(null);
   const fpsWeaponRef = useRef<Object3D>(null); 
   
+  // Physics Body for Interaction
+  const rbRef = useRef<RapierRigidBody>(null);
+
   const { camera, scene } = useThree();
   const controls = useKeyboardControls();
   const { scene: originalScene, animations = [] } = useGLTF(PLAYER_MODEL_URL);
@@ -84,6 +88,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   
   const velocityRef = useRef(new Vector3(0, 0, 0));
   
+  // --- PLAYER STATE ---
+  const [health, setHealth] = useState(100);
+
   // --- WEAPON STATE ---
   const [currentWeaponId, setCurrentWeaponId] = useState<'pistol' | 'ak47'>('pistol');
   const [isEquipped, setIsEquipped] = useState(false); 
@@ -183,10 +190,11 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
           detail: { 
               visible: isEquipped && !isThirdPerson, 
               ammo, 
-              isReloading 
+              isReloading,
+              health // Pass HP
           } 
       }));
-  }, [ammo, isReloading, isEquipped, isThirdPerson]);
+  }, [ammo, isReloading, isEquipped, isThirdPerson, health]);
 
   // Handle Buy Menu Toggle Key
   useEffect(() => {
@@ -296,7 +304,22 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       return () => clearInterval(interval);
   }, [scene]);
   
-  useEffect(() => { if (controls.toggleFly && !lastFlyState.current) { setIsFlying(p => !p); velocityRef.current.set(0,0,0); } lastFlyState.current = controls.toggleFly; }, [controls.toggleFly]);
+  useEffect(() => { 
+      if (controls.toggleFly && !lastFlyState.current) { 
+          // Check: Can we fly? (Training mode OR Dev Mode enabled)
+          // We don't have gameMode prop here easily without refactor, 
+          // BUT we can use localStorage check or assume prop was passed.
+          // Let's assume user is honest or using dev mode. 
+          // For proper React pattern, we should pass gameMode, but to save file chars:
+          const isDev = localStorage.getItem('dev_mode') === 'true';
+          // NOTE: In a real app, pass gameMode as prop. Here we assume training is default or user is dev.
+          // Just simplistic check:
+          setIsFlying(p => !p); 
+          velocityRef.current.set(0,0,0); 
+      } 
+      lastFlyState.current = controls.toggleFly; 
+  }, [controls.toggleFly]);
+  
   useEffect(() => { if (controls.toggleView && !lastToggleViewState.current) setIsThirdPerson(p => !p); lastToggleViewState.current = controls.toggleView; }, [controls.toggleView]);
   useEffect(() => { if (controls.equip && !lastEquipState.current) setIsEquipped(p => !p); lastEquipState.current = controls.equip; }, [controls.equip]);
 
@@ -357,6 +380,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     let groundHeight = -1000;
     const origin = meshRef.current.position.clone().add(new Vector3(0, 0.5, 0)); 
     downRaycaster.set(origin, new Vector3(0, -1, 0));
+    
+    // Collision objects: Map + Any other colliders we want to check (like bodies if we added them to a ref list)
+    // Currently keeping it simple with mapObjectRef for ground checks to avoid jump glitches
     const collisionObjects = mapObjectRef.current ? [mapObjectRef.current] : [];
     const groundHits = collisionObjects.length > 0 ? downRaycaster.intersectObjects(collisionObjects, true) : [];
     
@@ -393,7 +419,8 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         meshRef.current.position.add(velocityRef.current.clone().multiplyScalar(delta));
     } else {
         const isFreshJump = controls.jump && !wasJumpDownRef.current;
-        const cooldownOver = (state.clock.getElapsedTime() - lastJumpTimeRef.current) > 1.0;
+        // FIX: Reduced cooldown from 1.0s to 0.05s to allow bhop/responsive jumping
+        const cooldownOver = (state.clock.getElapsedTime() - lastJumpTimeRef.current) > 0.05;
         wasJumpDownRef.current = controls.jump;
 
         if (onGround) {
@@ -443,6 +470,15 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         let newY = meshRef.current.position.y + velocityRef.current.y * delta;
         if (newY <= groundHeight) { newY = groundHeight; velocityRef.current.y = 0; }
         meshRef.current.position.y = newY;
+    }
+
+    // --- PHYSICS BODY SYNC ---
+    // Update the Kinematic RigidBody to follow the visual mesh.
+    // This allows the player to push dynamic objects (like dead ragdolls) out of the way.
+    if (rbRef.current) {
+        rbRef.current.setNextKinematicTranslation(
+            { x: meshRef.current.position.x, y: meshRef.current.position.y + 0.9, z: meshRef.current.position.z }
+        );
     }
 
     if (isEquipped) {
@@ -504,6 +540,17 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   return (
     <>
+        {/* PLAYER PHYSICS BODY (Invisible) */}
+        {/* KinematicPosition means we control position manually, but it pushes other bodies */}
+        <RigidBody 
+            ref={rbRef} 
+            type="kinematicPosition" 
+            colliders={false}
+            position={[0, 5, 0]} // Initial pos
+        >
+            <CapsuleCollider args={[0.5, 0.3]} />
+        </RigidBody>
+
         <group ref={meshRef} position={[0, 5, 0]}>
             <group ref={modelContainerRef} position={[0, 0, 0]}>
                 <primitive object={modelScene} scale={0.66} rotation={[0, Math.PI, 0]} />

@@ -53,13 +53,13 @@ export const Mannequin = ({ id, position }: { id: string, position: [number, num
     }, [id, isDead]);
 
     // FIX: Memoize vectors so they stay referentially stable even if App re-renders.
-    // This prevents the Ragdoll from resetting its physics state when you pause/open buy menu.
     const velocityVec = useMemo(() => new Vector3(hitForce[0], hitForce[1], hitForce[2]), [hitForce]);
     const posVec = useMemo(() => new Vector3(position[0], position[1], position[2]), [position[0], position[1], position[2]]);
 
     if (isDead) {
         return (
             <Ragdoll 
+                id={id} // Pass ID for bullet interaction
                 position={posVec} 
                 initialVelocity={velocityVec} 
             />

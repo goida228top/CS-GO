@@ -1,4 +1,3 @@
-
 import React, { Suspense, useState, useEffect, useRef } from 'react';
 import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -16,23 +15,19 @@ useGLTF.preload(MAP_URL);
 // --- BULLET SYSTEM COMPONENT ---
 const BulletSystem = () => {
     const { scene } = useThree();
-    // Храним только примитивы (массивы), никаких Vector3 в стейте!
     const [bullets, setBullets] = useState<Bullet[]>([]);
     const [decals, setDecals] = useState<Decal[]>([]);
     
     const raycaster = useRef(new Raycaster());
     const bulletIdCounter = useRef(0);
 
-    // Временные векторы для расчетов, чтобы не создавать их каждый кадр (оптимизация и GC)
     const tempPos = useRef(new Vector3());
     const tempVel = useRef(new Vector3());
-    const tempNormal = useRef(new Vector3());
     const tempDummy = useRef(new Object3D());
 
     useEffect(() => {
         const handleFire = (e: any) => {
             if (!e.detail) return;
-            // Получаем Vector3 из события, но сразу конвертируем в массив для стейта
             const { position, velocity } = e.detail;
             
             const newBullet: Bullet = {
@@ -54,12 +49,19 @@ const BulletSystem = () => {
         const now = Date.now();
         const survivingBullets: Bullet[] = [];
         
+        // --- GATHER HITTABLE OBJECTS ---
         const map = scene.getObjectByName('environment');
         const hittableObjects: Object3D[] = [];
         if (map) hittableObjects.push(map);
         
+        // Traverse scene to find Mannequins (alive) and Ragdolls (dead parts)
         scene.traverse((obj) => {
+             // Alive Mannequin Tag
              if (obj.userData && obj.userData.isMannequin) {
+                 hittableObjects.push(obj);
+             }
+             // Dead Ragdoll Tag (on the inner mesh of the RigidBody)
+             if (obj.userData && obj.userData.isRagdoll) {
                  hittableObjects.push(obj);
              }
         });
@@ -67,38 +69,50 @@ const BulletSystem = () => {
         bullets.forEach(bullet => {
             if ((now - bullet.createdAt) / 1000 > BULLET_LIFETIME) return;
 
-            // 1. Восстанавливаем Vector3 из массива для расчетов
             tempPos.current.set(bullet.position[0], bullet.position[1], bullet.position[2]);
             tempVel.current.set(bullet.velocity[0], bullet.velocity[1], bullet.velocity[2]);
             
             const startPos = tempPos.current.clone();
-
-            // Гравитация
             tempVel.current.y -= BULLET_GRAVITY * delta;
-            
-            // Движение
             const velocityStep = tempVel.current.clone().multiplyScalar(delta);
             const nextPos = tempPos.current.clone().add(velocityStep);
             const dist = velocityStep.length();
 
-            // Рейкаст
             const direction = velocityStep.clone().normalize();
             raycaster.current.set(startPos, direction);
             
-            // Важно: проверяем на undefined
             const intersects = raycaster.current.intersectObjects(hittableObjects, true);
             const hit = intersects.find(hit => hit.distance <= dist);
 
             if (hit && hit.point) {
-                // --- ЛОГИКА ПОПАДАНИЯ ---
+                let hitHandled = false;
                 
-                // Проверяем манекен
-                let isMannequin = false;
+                // 1. Check for Ragdoll (Dead) - Priority
                 let obj: Object3D | null = hit.object;
                 while(obj) {
+                    if (obj.userData && obj.userData.isRagdoll) {
+                        hitHandled = true;
+                        // Use a higher force multiplier for ragdolls to make them "juggle"
+                        const juggleMultiplier = 2.0; 
+                        const impulseForce = direction.clone().multiplyScalar(window.GAME_SETTINGS.gunForce * juggleMultiplier);
+                        
+                        // Add a slight upward component to help them fly
+                        impulseForce.y += 0.5 * window.GAME_SETTINGS.gunForce;
+
+                        const event = new CustomEvent('RAGDOLL_HIT', { 
+                            detail: { 
+                                ragdollId: obj.userData.ragdollId,
+                                partName: obj.userData.partName || hit.object.name, 
+                                force: [impulseForce.x, impulseForce.y, impulseForce.z],
+                                point: [hit.point.x, hit.point.y, hit.point.z]
+                            } 
+                        });
+                        window.dispatchEvent(event);
+                        break;
+                    }
                     if (obj.userData && obj.userData.isMannequin) {
-                        isMannequin = true;
-                        // Отправляем массив, чтобы не заморозить Vector3
+                        hitHandled = true;
+                        // Alive Mannequin Logic
                         const impulseForce = direction.clone().multiplyScalar(window.GAME_SETTINGS.gunForce);
                         const event = new CustomEvent('MANNEQUIN_HIT', { 
                             detail: { 
@@ -112,25 +126,17 @@ const BulletSystem = () => {
                     obj = obj.parent;
                 }
 
-                // Если стена -> Декаль
-                // FIX: Проверяем hit.face, так как он может быть null
-                if (!isMannequin && hit.face) {
-                    // ВАЖНО: hit.face.normal находится в локальных координатах объекта (стены).
-                    // Трансформируем нормаль в мировые координаты, чтобы исправить поворот на стенах.
+                // 2. Check for Wall (Decal)
+                if (!hitHandled && hit.face) {
                     const normal = hit.face.normal.clone();
                     normal.transformDirection(hit.object.matrixWorld).normalize();
-                    
-                    // Позиция декали. Оставляем прямо в точке попадания, так как теперь это куб.
                     const decalPos = hit.point.clone();
                     
-                    // Расчет вращения через фиктивный объект
                     tempDummy.current.position.copy(hit.point);
-                    // Смотрим в точку "стена + нормаль", то есть перпендикулярно стене наружу
                     tempDummy.current.lookAt(hit.point.clone().add(normal));
                     
                     const newDecal: Decal = {
                         id: `decal-${Date.now()}-${Math.random()}`,
-                        // Сохраняем ТОЛЬКО массивы
                         position: [decalPos.x, decalPos.y, decalPos.z],
                         rotation: [tempDummy.current.rotation.x, tempDummy.current.rotation.y, tempDummy.current.rotation.z]
                     };
@@ -142,11 +148,10 @@ const BulletSystem = () => {
                     });
                 }
                 
-                // Пуля уничтожается
-                return; 
+                return; // Bullet destroyed
             }
 
-            // Если не попали - обновляем позицию (сохраняем как массив)
+            // Move bullet
             survivingBullets.push({
                 ...bullet,
                 position: [nextPos.x, nextPos.y, nextPos.z],
@@ -161,7 +166,6 @@ const BulletSystem = () => {
         <>
             {bullets.map(b => (
                 <mesh key={b.id} position={b.position}>
-                    {/* Маленькие желтые кубики */}
                     <boxGeometry args={[0.03, 0.03, 0.03]} />
                     <meshBasicMaterial {...({ color: "yellow" } as any)} />
                 </mesh>
@@ -169,7 +173,6 @@ const BulletSystem = () => {
 
             {decals.map(d => (
                 <mesh key={d.id} position={d.position} rotation={d.rotation}>
-                    {/* Квадратные (кубические) дырки от пуль */}
                     <boxGeometry args={[0.1, 0.1, 0.1]} />
                     <meshBasicMaterial {...({ color: "black" } as any)} />
                 </mesh>
@@ -178,7 +181,12 @@ const BulletSystem = () => {
     );
 };
 
-export const World: React.FC = () => {
+interface WorldProps {
+    gameMode: string;
+    isDev?: boolean;
+}
+
+export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
   return (
     <group>
       <color attach="background" args={['#000000']} />
@@ -197,13 +205,21 @@ export const World: React.FC = () => {
         <MapModel />
       </Suspense>
 
-      {/* Обновленные позиции манекенов */}
-      <Mannequin id="dummy-1" position={[-19.27, 2.90, -23.39]} />
-      <Mannequin id="dummy-2" position={[22.32, 4.34, -19.59]} />
+      {gameMode === 'training' && (
+          <>
+            <Mannequin id="dummy-1" position={[-19.27, 2.90, -23.39]} />
+            <Mannequin id="dummy-2" position={[22.32, 4.34, -19.59]} />
+            <Mannequin id="dummy-3" position={[5.0, 1.0, 5.0]} />
+          </>
+      )}
 
-      <PhysicsDragger />
+      {/* Physics Dragger only for training or dev */}
+      {(gameMode === 'training' || isDev) && <PhysicsDragger />}
+      
       <BulletSystem />
-      <ModMenu />
+      
+      {/* Show ModMenu in training or if isDev */}
+      <ModMenu isDev={isDev} gameMode={gameMode} />
     </group>
   );
 };

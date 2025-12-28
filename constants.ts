@@ -15,7 +15,7 @@ export const ACCELERATION = 12.0; // Increased (was 8.0) to make movement respon
 export const AIR_ACCELERATE = 100.0; // Air control (high for strafing)
 export const AIR_MAX_SPEED = 1.0; // Cap on how much speed you can ADD in air (not total speed)
 
-export const JUMP_FORCE = 7.0; // Updated to 7.0 as requested
+export const JUMP_FORCE = 8.0; // Updated to 8.0 (Higher jump)
 export const GRAVITY = 30; // Snappier gravity
 
 // --- CAMERA SETTINGS (1st Person) ---

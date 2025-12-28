@@ -34,6 +34,15 @@ export interface Decal {
 
 export type Keys = keyof ControlState;
 
+// --- NEW TYPES FOR UI/PROFILE ---
+export type Team = 'T' | 'CT' | 'SPECTATOR';
+
+export interface PlayerProfile {
+    nickname: string;
+    avatarColor: string; // Hex code
+    team?: Team;
+}
+
 declare global {
   interface Window {
     GAME_SETTINGS: {
@@ -50,12 +59,4 @@ declare global {
       [elemName: string]: any;
     }
   }
-}
-
-declare module 'react' {
-    namespace JSX {
-        interface IntrinsicElements {
-            [elemName: string]: any;
-        }
-    }
 }
