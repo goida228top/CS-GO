@@ -23,39 +23,29 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
     const isHost = players.find(p => p.id === myId)?.isHost || false;
 
     useEffect(() => {
-        // Listen for room state updates
+        // 1. Initialize immediately from cache if available (FIXES EMPTY LIST BUG)
+        if (socketManager.currentRoom && socketManager.currentRoom.players) {
+            setPlayers(Object.values(socketManager.currentRoom.players));
+        }
+
+        // 2. Listen for future updates
         socketManager.onRoomJoined = (roomState) => {
             if (roomState.players) {
-                // Convert object to array
                 const playerList = Object.values(roomState.players) as LobbyPlayer[];
                 setPlayers(playerList);
             }
         };
 
         socketManager.onGameStart = () => {
-             // Game started by host
-             // Find my team
-             const me = players.find(p => p.id === socketManager.socket?.id); // Refresh players from state? No, relies on server message usually
-             // But for safety, we just pass the last known team or the server sends it.
-             // Simplified: Just callback to App to start rendering World
-             
-             // We need to pass the team I selected.
-             // We'll trust the server state or local state.
              const myTeam = players.find(p => p.id === socketManager.socket?.id)?.team || 'CT';
              onSelectTeam(myTeam);
         };
         
-        // Also listen for player updates (joins/team switches) while in lobby
-        const socket = socketManager.socket;
-        if(socket) {
-            socket.on('room_updated', (roomState) => {
-                const playerList = Object.values(roomState.players) as LobbyPlayer[];
-                setPlayers(playerList);
-            });
-        }
-
+        // Also listen for player updates (joins/team switches) using the callback set in SocketManager
+        // Note: SocketManager.onRoomJoined is reused for room_updated events in our new logic
+        
         return () => {
-            if(socket) socket.off('room_updated');
+            socketManager.onRoomJoined = null;
             socketManager.onGameStart = null;
         };
     }, []);
@@ -76,7 +66,7 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
             <div className="w-8 h-8 rounded-full shadow-inner" style={{ backgroundColor: player.avatarColor }}></div>
             <div className="flex flex-col">
                 <span className={`font-bold text-sm ${player.id === myId ? 'text-yellow-400' : 'text-white'}`}>
-                    {player.nickname} {player.id === myId && '(YOU)'}
+                    {player.nickname} {player.id === myId && '(ВЫ)'}
                 </span>
                 {player.isHost && <span className="text-[10px] text-lime-500 font-mono tracking-wider">HOST</span>}
             </div>
@@ -90,9 +80,9 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
             {/* HEADER */}
             <div className="text-center py-6 border-b border-white/10 relative z-20">
                  <h2 className="text-3xl font-black text-white uppercase tracking-[0.2em] drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
-                     LOBBY
+                     ЛОББИ
                  </h2>
-                 <p className="text-gray-500 text-xs mt-1">WAITING FOR PLAYERS...</p>
+                 <p className="text-gray-500 text-xs mt-1">ОЖИДАНИЕ ИГРОКОВ...</p>
             </div>
             
             <div className="flex-1 flex w-full relative">
@@ -106,14 +96,14 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
                 <div className="flex-1 flex flex-col relative border-r border-white/10 bg-gradient-to-br from-orange-900/20 to-black">
                     <div className="p-8 flex flex-col h-full">
                         <div className="flex items-center justify-between mb-6">
-                            <h3 className="text-4xl font-black text-orange-500 uppercase drop-shadow-md">Terrorists</h3>
+                            <h3 className="text-4xl font-black text-orange-500 uppercase drop-shadow-md">ТЕРРОРИСТЫ</h3>
                             <div className="text-6xl opacity-20">👺</div>
                         </div>
                         
                         {/* Player List */}
                         <div className="flex-1 overflow-y-auto">
                             {tPlayers.map(p => <PlayerSlot key={p.id} player={p} />)}
-                            {tPlayers.length === 0 && <div className="text-white/20 text-sm italic">Slot Empty</div>}
+                            {tPlayers.length === 0 && <div className="text-white/20 text-sm italic">Пусто</div>}
                         </div>
 
                         {/* Join Button */}
@@ -122,7 +112,7 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
                             disabled={tPlayers.find(p => p.id === myId) !== undefined}
                             className="mt-4 w-full py-4 border-2 border-orange-600/50 text-orange-500 hover:bg-orange-600 hover:text-white transition-all uppercase font-bold tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            JOIN T SIDE
+                            ЗАЙТИ ЗА T
                         </button>
                     </div>
                 </div>
@@ -131,14 +121,14 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
                 <div className="flex-1 flex flex-col relative border-l border-white/10 bg-gradient-to-bl from-cyan-900/20 to-black">
                     <div className="p-8 flex flex-col h-full">
                         <div className="flex items-center justify-between mb-6">
-                            <h3 className="text-4xl font-black text-cyan-500 uppercase drop-shadow-md">Counter-Terrorists</h3>
+                            <h3 className="text-4xl font-black text-cyan-500 uppercase drop-shadow-md">СПЕЦНАЗ</h3>
                             <div className="text-6xl opacity-20">👮‍♂️</div>
                         </div>
 
                         {/* Player List */}
                         <div className="flex-1 overflow-y-auto">
                             {ctPlayers.map(p => <PlayerSlot key={p.id} player={p} />)}
-                            {ctPlayers.length === 0 && <div className="text-white/20 text-sm italic">Slot Empty</div>}
+                            {ctPlayers.length === 0 && <div className="text-white/20 text-sm italic">Пусто</div>}
                         </div>
 
                          {/* Join Button */}
@@ -147,7 +137,7 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
                             disabled={ctPlayers.find(p => p.id === myId) !== undefined}
                             className="mt-4 w-full py-4 border-2 border-cyan-600/50 text-cyan-500 hover:bg-cyan-600 hover:text-white transition-all uppercase font-bold tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            JOIN CT SIDE
+                            ЗАЙТИ ЗА CT
                         </button>
                     </div>
                 </div>
@@ -160,14 +150,14 @@ export const TeamSelect: React.FC<TeamSelectProps> = ({ userProfile, onSelectTea
                         onClick={handleStartGame}
                         className="px-12 py-4 bg-green-600 hover:bg-green-500 text-white font-black text-xl uppercase tracking-widest rounded-full shadow-[0_0_30px_rgba(22,163,74,0.6)] hover:shadow-[0_0_50px_rgba(22,163,74,1)] hover:scale-105 transition-all"
                     >
-                        START MATCH
+                        НАЧАТЬ МАТЧ
                     </button>
                 </div>
             )}
             
             {!isHost && (
                 <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-40 text-gray-500 font-mono text-sm bg-black/80 px-4 py-2 rounded">
-                    WAITING FOR HOST TO START...
+                    ОЖИДАНИЕ ХОСТА...
                 </div>
             )}
         </div>

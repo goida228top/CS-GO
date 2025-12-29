@@ -7,6 +7,7 @@ const SERVER_URL = 'https://cs-go-3mje.onrender.com';
 class SocketManager {
     public socket: Socket | null = null;
     public otherPlayers: any = {};
+    public currentRoom: any = null; // Cache room state
     
     // Callbacks for UI
     public onRoomListUpdate: ((rooms: GameRoom[]) => void) | null = null;
@@ -41,7 +42,15 @@ class SocketManager {
 
         this.socket.on('room_joined', (roomState) => {
              console.log("Joined room:", roomState);
+             this.currentRoom = roomState;
+             this.syncPlayersFromRoom(roomState);
              if (this.onRoomJoined) this.onRoomJoined(roomState);
+        });
+        
+        this.socket.on('room_updated', (roomState) => {
+             this.currentRoom = roomState;
+             this.syncPlayersFromRoom(roomState);
+             if (this.onRoomJoined) this.onRoomJoined(roomState); // Re-use this callback for updates in lobby
         });
 
         this.socket.on('game_started', () => {
@@ -49,9 +58,41 @@ class SocketManager {
         });
 
         // --- GAMEPLAY EVENTS ---
-        // (These are handled in World.tsx mostly, but we keep basic listeners here)
+        this.socket.on('player_moved', (data) => {
+             if (this.otherPlayers[data.id]) {
+                 this.otherPlayers[data.id].position = data.pos;
+                 this.otherPlayers[data.id].rotation = data.rot;
+                 this.otherPlayers[data.id].weapon = data.weapon;
+             } else {
+                 // If we somehow missed this player, add stub
+                 this.otherPlayers[data.id] = {
+                     id: data.id,
+                     position: data.pos,
+                     rotation: data.rot,
+                     weapon: data.weapon
+                 };
+             }
+        });
+
         this.socket.on('disconnect', () => {
             console.log("❌ Disconnected from server");
+        });
+    }
+
+    // Helper to populate otherPlayers from the Room object so World.tsx has data immediately
+    private syncPlayersFromRoom(roomState: any) {
+        if (!roomState || !roomState.players) return;
+        
+        Object.values(roomState.players).forEach((p: any) => {
+            if (this.socket && p.id !== this.socket.id) {
+                this.otherPlayers[p.id] = {
+                    ...p, // Copy name, color, team
+                    // Ensure position exists if server sends it
+                    position: p.position || { x: 0, y: 0, z: 0 },
+                    rotation: p.rotation || { y: 0 },
+                    weapon: p.weapon || 'pistol'
+                };
+            }
         });
     }
 
