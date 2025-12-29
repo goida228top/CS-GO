@@ -43,7 +43,6 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({ userProfile, onBac
     }, []);
 
     const handleCreate = () => {
-        // Map name is technically implied by the creator's name logic requested
         socketManager.createRoom('de_dust2');
     };
 
@@ -53,7 +52,7 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({ userProfile, onBac
 
     return (
         <div className="absolute inset-0 z-50 bg-black/95 font-sans text-white flex flex-col items-center pt-20 bg-[url('https://raw.githubusercontent.com/goida228top/textures/main/grid_bg.png')] bg-cover">
-            <div className="w-full max-w-4xl p-6 bg-black/80 border border-gray-800 rounded-lg shadow-2xl backdrop-blur-md">
+            <div className="w-full max-w-5xl p-6 bg-black/80 border border-gray-800 rounded-lg shadow-2xl backdrop-blur-md">
                 
                 <div className="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
                     <div>
@@ -75,11 +74,13 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({ userProfile, onBac
 
                 {/* SERVER LIST */}
                 <div className="min-h-[400px] border border-gray-800 rounded bg-[#111]">
-                    <div className="grid grid-cols-12 bg-[#222] p-3 text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    {/* Header Row */}
+                    <div className="grid grid-cols-12 bg-[#222] p-3 text-xs font-bold text-gray-400 uppercase tracking-wider items-center">
                         <div className="col-span-1 text-center">ID</div>
-                        <div className="col-span-6">SERVER NAME (HOST)</div>
+                        <div className="col-span-5">SERVER NAME (HOST)</div>
                         <div className="col-span-3 text-center">MAP</div>
-                        <div className="col-span-2 text-center">PLAYERS</div>
+                        <div className="col-span-1 text-center">PLAYERS</div>
+                        <div className="col-span-2 text-center">ACTION</div>
                     </div>
 
                     {isLoading && rooms.length === 0 ? (
@@ -94,19 +95,30 @@ export const ServerBrowser: React.FC<ServerBrowserProps> = ({ userProfile, onBac
                                 <div 
                                     key={room.id}
                                     className={`
-                                        grid grid-cols-12 p-4 border-b border-gray-800 items-center transition-colors
-                                        ${room.status === 'playing' ? 'opacity-50 grayscale' : 'hover:bg-white/5 cursor-pointer'}
+                                        grid grid-cols-12 p-4 border-b border-gray-800 items-center transition-colors group
+                                        ${room.status === 'playing' ? 'opacity-50 grayscale' : 'hover:bg-white/5'}
                                     `}
-                                    onClick={() => room.status !== 'playing' && handleJoin(room.id)}
                                 >
                                     <div className="col-span-1 text-center font-mono text-gray-600">#{idx + 1}</div>
-                                    <div className="col-span-6 font-bold text-white flex items-center gap-2">
+                                    <div className="col-span-5 font-bold text-white flex items-center gap-2">
                                         {room.status === 'playing' && <span className="text-[10px] bg-red-600 px-1 rounded">LIVE</span>}
                                         {room.name}
                                     </div>
                                     <div className="col-span-3 text-center text-gray-400 text-sm">{room.map}</div>
-                                    <div className="col-span-2 text-center font-mono text-cyan-400">
+                                    <div className="col-span-1 text-center font-mono text-cyan-400">
                                         {room.players}/{room.maxPlayers}
+                                    </div>
+                                    <div className="col-span-2 text-center flex justify-center">
+                                        {room.status !== 'playing' ? (
+                                            <button 
+                                                onClick={() => handleJoin(room.id)}
+                                                className="px-4 py-1 bg-white/10 hover:bg-lime-500 hover:text-black border border-white/20 hover:border-lime-500 text-white text-xs font-bold uppercase transition-all rounded shadow-sm"
+                                            >
+                                                CONNECT
+                                            </button>
+                                        ) : (
+                                            <span className="text-xs text-red-500 font-bold">IN PROGRESS</span>
+                                        )}
                                     </div>
                                 </div>
                             ))}
