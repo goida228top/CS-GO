@@ -7,9 +7,8 @@ import { WeaponRenderer } from './WeaponRenderer';
 import { SkeletonUtils } from 'three-stdlib';
 import { soundManager } from './SoundGenerator';
 import { RigidBody, CapsuleCollider, RapierRigidBody } from '@react-three/rapier';
-import { socketManager } from './SocketManager'; // IMPORT SOCKET MANAGER
+import { socketManager } from './SocketManager'; 
 
-// No import BuyMenu here anymore
 import { 
     PLAYER_MODEL_URL, 
     RUN_SPEED, 
@@ -145,12 +144,10 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   // --- WEAPON FUNCTIONS ---
 
   const performBuy = (weaponId: 'pistol' | 'ak47') => {
-      // 1. Reset triggers so old animations don't play on new weapon
       setShootTrigger(0);
       setReloadTrigger(0);
       setInspectTrigger(0);
       
-      // 2. Set new weapon state
       setCurrentWeaponId(weaponId);
       setAmmo(WEAPONS_DATA[weaponId].maxAmmo);
       setIsReloading(false);
@@ -159,7 +156,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
   };
 
-  // Listen for Buy Event from HUD
   useEffect(() => {
       const onBuy = (e: any) => {
           if (e.detail) {
@@ -172,12 +168,10 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   const startReload = () => {
       if (isReloading || ammo === currentWeapon.maxAmmo) return;
-      
       setIsReloading(true);
       setReloadTrigger(c => c + 1);
       
       if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
-
       reloadTimerRef.current = setTimeout(() => {
           setAmmo(currentWeapon.maxAmmo);
           setIsReloading(false);
@@ -198,7 +192,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
               visible: isEquipped && !isThirdPerson, 
               ammo, 
               isReloading,
-              health // Pass HP
+              health 
           } 
       }));
   }, [ammo, isReloading, isEquipped, isThirdPerson, health]);
@@ -213,10 +207,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       lastBuyState.current = controls.buy;
   }, [controls.buy, isBuyMenuOpen, onBuyMenuToggle]);
 
-  // Reset local state if App forces close (e.g. by ESC)
   useEffect(() => {
-      // Need a way to know if App closed it. 
-      // Simplified: If locked becomes true externally, we assume menu closed.
       if (isLocked && isBuyMenuOpen) {
           setIsBuyMenuOpen(false);
       }
@@ -229,32 +220,37 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     // --- POS UPDATE FOR HUD & NETWORK ---
     if (meshRef.current) {
         const p = meshRef.current.position;
-        // HUD Update
         window.dispatchEvent(new CustomEvent('HUD_POS_UPDATE', { 
             detail: { x: p.x, y: p.y, z: p.z } 
         }));
 
-        // Network Update (Send 30 times per second = ~33ms)
         if (socketManager.socket && now - lastNetworkUpdate.current > 30) {
              const isMoving = controls.forward || controls.backward || controls.left || controls.right;
+             // Send 'none' if unequipped so other players see empty hands
+             const weaponToSend = isEquipped ? currentWeaponId : 'none';
+             
              socketManager.updatePosition(
                  { x: p.x, y: p.y, z: p.z }, 
                  bodyYawRef.current,
-                 currentWeaponId,
+                 weaponToSend,
                  { isCrouching: controls.crouch, isMoving: isMoving }
              );
              lastNetworkUpdate.current = now;
         }
+        
+        // --- VOID CHECK (FALL THROUGH MAP FIX) ---
+        if (p.y < -20) {
+            console.warn("Fell through map! Teleporting to spawn.");
+            meshRef.current.position.set(SPAWN_POS[0], SPAWN_POS[1], SPAWN_POS[2]);
+            velocityRef.current.set(0, 0, 0);
+        }
     }
 
-    // --- FIX: WAIT FOR MAP TO LOAD ---
-    // If map is not loaded yet, finding it or freezing player to prevent falling.
     if (!mapObjectRef.current) {
         const map = scene.getObjectByName('environment');
         if (map) {
             mapObjectRef.current = map;
         } else {
-            // Freeze player at spawn
             if (meshRef.current) {
                 meshRef.current.position.set(SPAWN_POS[0], SPAWN_POS[1], SPAWN_POS[2]);
                 velocityRef.current.set(0,0,0);
@@ -266,31 +262,26 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
                      z: SPAWN_POS[2]
                  });
             }
-            return; // SKIP PHYSICS
+            return; 
         }
     }
 
-    // Shooting Logic
     const canShoot = isEquipped && isLocked && !isReloading && !isBuyMenuOpen;
     const isAuto = currentWeapon.auto;
     const fireRate = currentWeapon.rate;
     
-    // Auto or Semi-Auto Check
     const triggerPull = isAuto ? controls.shoot : (controls.shoot && !lastShootState.current);
     const cooldownOver = (time - lastShotTimeRef.current) >= fireRate;
 
     if (canShoot && triggerPull && cooldownOver) {
         if (ammo > 0) {
             lastShotTimeRef.current = time;
-            
             setMuzzleFlashVisible(true);
             setTimeout(() => setMuzzleFlashVisible(false), 50);
-            
             setShootTrigger(c => c + 1);
             setAmmo(a => a - 1);
             soundManager.playShoot();
             
-            // Network Shoot
             if(socketManager.socket) {
                  const origin = camera.position.clone();
                  const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
@@ -302,8 +293,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
             const origin = camera.position.clone();
             const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-            
-            // Spawn bullet slightly forward
             const spawnPos = origin.clone().add(direction.clone().multiplyScalar(1.5));
             const velocity = direction.multiplyScalar(BULLET_SPEED);
 
@@ -320,21 +309,17 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     }
     lastShootState.current = controls.shoot;
     
-    // Manual Reload
     if (controls.reload && !lastReloadState.current && isEquipped && !isBuyMenuOpen) {
         startReload();
     }
     lastReloadState.current = controls.reload;
 
-    // Inspection
     if (controls.inspect && !lastInspectState.current && isEquipped && !isReloading && !isBuyMenuOpen) {
         setInspectTrigger(c => c + 1);
     }
     lastInspectState.current = controls.inspect;
   });
 
-  // --- STANDARD MOVEMENT & ANIMATION LOGIC (Abbreviated) ---
-  
   useEffect(() => {
     if (!modelScene) return;
     let foundHead: Object3D | null = null;
@@ -352,7 +337,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     if (foundRightArmForWeapon) forceUpdate({});
   }, [modelScene]);
 
-  // Keep this for redundancy, but useFrame handles the lock now
   useEffect(() => {
       const interval = setInterval(() => { const map = scene.getObjectByName('environment'); if (map) { mapObjectRef.current = map; clearInterval(interval); } }, 500);
       return () => clearInterval(interval);
@@ -361,8 +345,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   useEffect(() => { 
       if (controls.toggleFly && !lastFlyState.current) { 
           const isDev = localStorage.getItem('dev_mode') === 'true';
-          // Only allow fly toggle if Dev or Training mode (We assume app passes correct logic, here just simple check)
-          // Since gameMode isn't prop here, relying on isDev or Cheat Menu for online fairness
           if (isDev) {
               setIsFlying(p => !p); 
               velocityRef.current.set(0,0,0); 
@@ -396,7 +378,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     }
   }, [controls, actions, isEquipped, isFlying]);
 
-  // Mouse Look
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isLocked) return;
@@ -409,39 +390,29 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     return () => document.removeEventListener('mousemove', handleMouseMove);
   }, [isLocked]);
 
-  // Movement Physics Loop
   useFrame((state, delta) => {
+    if (!meshRef.current || !mapObjectRef.current) return;
+
+    // Define time here to be used for weapon sway
     const time = state.clock.getElapsedTime(); 
-    if (!meshRef.current) return;
-    
-    // SKIP if Map not loaded (handled at start of useFrame)
-    if (!mapObjectRef.current) return;
 
     const cameraYaw = rotationRef.current.yaw;
     const cameraPitch = rotationRef.current.pitch;
     
-    // Compass Logic Removed from here
-    
-    const playerPos = meshRef.current.position;
-
-    if (camera && (camera as any).isPerspectiveCamera) {
-      const pCam = camera as ThreePerspectiveCamera;
-      pCam.near = 0.01;
-      pCam.fov = MathUtils.lerp(pCam.fov, (controls.boost && isFlying) ? 80 : 50, delta * 12);
-      pCam.updateProjectionMatrix();
-    }
+    const pCam = camera as ThreePerspectiveCamera;
+    pCam.fov = MathUtils.lerp(pCam.fov, (controls.boost && isFlying) ? 80 : 50, delta * 12);
+    pCam.updateProjectionMatrix();
     
     let onGround = false;
     let groundHeight = -1000;
     const origin = meshRef.current.position.clone().add(new Vector3(0, 0.5, 0)); 
     downRaycaster.set(origin, new Vector3(0, -1, 0));
     
-    // Collision objects: Map + Any other colliders we want to check (like bodies if we added them to a ref list)
-    // Currently keeping it simple with mapObjectRef for ground checks to avoid jump glitches
     const collisionObjects = mapObjectRef.current ? [mapObjectRef.current] : [];
     const groundHits = collisionObjects.length > 0 ? downRaycaster.intersectObjects(collisionObjects, true) : [];
     
-    if (groundHits.length > 0 && groundHits[0].distance < 0.55 && velocityRef.current.y <= 0) {
+    // FIX: Increased ground check distance from 0.55 to 0.7 to catch landings better
+    if (groundHits.length > 0 && groundHits[0].distance < 0.7 && velocityRef.current.y <= 0) {
          onGround = true;
          groundHeight = groundHits[0].point.y;
     }
@@ -459,6 +430,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     if (!isFlying && wishDir.dot(forward.clone().negate()) < 0.5) wishSpeed /= 1.7;
 
     if (isFlying) {
+        // Flying logic (omitted for brevity, unchanged)
         const speed = controls.boost ? SUPER_SPEED : FLY_SPEED;
         const camDir = new Vector3(Math.sin(cameraYaw) * Math.cos(cameraPitch), Math.sin(cameraPitch), Math.cos(cameraYaw) * Math.cos(cameraPitch));
         const camRight = new Vector3(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
@@ -474,7 +446,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         meshRef.current.position.add(velocityRef.current.clone().multiplyScalar(delta));
     } else {
         const isFreshJump = controls.jump && !wasJumpDownRef.current;
-        // FIX: Reduced cooldown from 1.0s to 0.05s to allow bhop/responsive jumping
         const cooldownOver = (state.clock.getElapsedTime() - lastJumpTimeRef.current) > 0.05;
         wasJumpDownRef.current = controls.jump;
 
@@ -527,9 +498,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         meshRef.current.position.y = newY;
     }
 
-    // --- PHYSICS BODY SYNC ---
-    // Update the Kinematic RigidBody to follow the visual mesh.
-    // This allows the player to push dynamic objects (like dead ragdolls) out of the way.
     if (rbRef.current) {
         rbRef.current.setNextKinematicTranslation(
             { x: meshRef.current.position.x, y: meshRef.current.position.y + 0.9, z: meshRef.current.position.z }
@@ -595,13 +563,11 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   return (
     <>
-        {/* PLAYER PHYSICS BODY (Invisible) */}
-        {/* KinematicPosition means we control position manually, but it pushes other bodies */}
         <RigidBody 
             ref={rbRef} 
             type="kinematicPosition" 
             colliders={false}
-            position={SPAWN_POS} // Use Updated Spawn
+            position={SPAWN_POS}
         >
             <CapsuleCollider args={[0.5, 0.3]} />
         </RigidBody>

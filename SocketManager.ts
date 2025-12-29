@@ -50,7 +50,7 @@ class SocketManager {
         this.socket.on('room_updated', (roomState) => {
              this.currentRoom = roomState;
              this.syncPlayersFromRoom(roomState);
-             if (this.onRoomJoined) this.onRoomJoined(roomState); // Re-use this callback for updates in lobby
+             if (this.onRoomJoined) this.onRoomJoined(roomState); 
         });
 
         this.socket.on('game_started', () => {
@@ -63,18 +63,34 @@ class SocketManager {
                  this.otherPlayers[data.id].position = data.pos;
                  this.otherPlayers[data.id].rotation = data.rot;
                  this.otherPlayers[data.id].weapon = data.weapon;
-                 // Sync animation states
                  this.otherPlayers[data.id].animState = data.animState;
              } else {
-                 // If we somehow missed this player, add stub
                  this.otherPlayers[data.id] = {
                      id: data.id,
                      position: data.pos,
                      rotation: data.rot,
                      weapon: data.weapon,
-                     animState: data.animState || { isCrouching: false, isMoving: false }
+                     animState: data.animState || { isCrouching: false, isMoving: false },
+                     shootTrigger: 0
                  };
              }
+        });
+
+        // Handle shooting specifically to trigger animation
+        this.socket.on('player_shot', (data) => {
+            // console.log("🔫 Player shot event received:", data.id);
+            if (this.otherPlayers[data.id]) {
+                const current = this.otherPlayers[data.id].shootTrigger || 0;
+                this.otherPlayers[data.id].shootTrigger = current + 1;
+            }
+            
+            const event = new CustomEvent('FIRE_BULLET', { 
+                detail: { 
+                    position: data.origin, 
+                    velocity: { x: data.direction.x * 150, y: data.direction.y * 150, z: data.direction.z * 150 } // approx speed
+                } 
+            });
+            window.dispatchEvent(event);
         });
 
         this.socket.on('disconnect', () => {
@@ -82,54 +98,34 @@ class SocketManager {
         });
     }
 
-    // Helper to populate otherPlayers from the Room object so World.tsx has data immediately
     private syncPlayersFromRoom(roomState: any) {
         if (!roomState || !roomState.players) return;
         
         Object.values(roomState.players).forEach((p: any) => {
             if (this.socket && p.id !== this.socket.id) {
+                const existing = this.otherPlayers[p.id] || {};
                 this.otherPlayers[p.id] = {
-                    ...p, // Copy name, color, team
-                    // Ensure position exists if server sends it
+                    ...existing,
+                    ...p, 
                     position: p.position || { x: 0, y: 0, z: 0 },
                     rotation: p.rotation || { y: 0 },
                     weapon: p.weapon || 'pistol',
-                    animState: p.animState || { isCrouching: false, isMoving: false }
+                    animState: p.animState || { isCrouching: false, isMoving: false },
+                    shootTrigger: existing.shootTrigger || 0
                 };
             }
         });
     }
 
-    // --- LOBBY ACTIONS ---
+    // --- ACTIONS ---
     
-    getRooms() {
-        this.socket?.emit('get_rooms');
-    }
+    getRooms() { this.socket?.emit('get_rooms'); }
+    createRoom(mapName: string) { this.socket?.emit('create_room', { map: mapName }); }
+    joinRoom(roomId: string) { this.socket?.emit('join_room', { roomId }); }
+    switchTeam(team: string) { this.socket?.emit('switch_team', { team }); }
+    startGame() { this.socket?.emit('start_game'); }
+    disconnect() { if (this.socket) { this.socket.disconnect(); this.socket = null; } }
 
-    createRoom(mapName: string) {
-        this.socket?.emit('create_room', { map: mapName });
-    }
-
-    joinRoom(roomId: string) {
-        this.socket?.emit('join_room', { roomId });
-    }
-
-    switchTeam(team: string) {
-        this.socket?.emit('switch_team', { team });
-    }
-
-    startGame() {
-        this.socket?.emit('start_game');
-    }
-
-    disconnect() {
-        if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
-        }
-    }
-
-    // Отправка позиции (вызываем в useFrame)
     updatePosition(
         pos: {x: number, y: number, z: number}, 
         rot: number, 

@@ -15,17 +15,12 @@ const io = new Server(server, {
 });
 
 // --- DATA STORE ---
-// players[socket.id] = { ...data, roomId: 'room1' }
 let players = {}; 
-
-// rooms['room1'] = { id: 'room1', name: 'NickRoom', players: {socketId: p}, status: 'waiting' }
 let rooms = {};
 
 io.on('connection', (socket) => {
     console.log(`Player connected: ${socket.id}`);
 
-    // Initial connection doesn't do much until they create/join a room
-    // But we capture their query params
     const { nickname, avatarColor } = socket.handshake.query;
 
     players[socket.id] = {
@@ -33,13 +28,14 @@ io.on('connection', (socket) => {
         nickname: nickname || `Player ${socket.id.substr(0,4)}`,
         avatarColor: avatarColor || '#fff',
         roomId: null,
-        team: null, // 'T' or 'CT'
+        team: null,
         isHost: false,
         isDead: false,
         health: 100,
         position: { x: 0, y: 0, z: 0 },
         rotation: { y: 0 },
-        weapon: 'pistol'
+        weapon: 'pistol',
+        animState: { isCrouching: false, isMoving: false } // Default anim state
     };
 
     // --- LOBBY LOGIC ---
@@ -57,7 +53,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
-        const roomId = `room-${socket.id}`; // Simple ID
+        const roomId = `room-${socket.id}`;
         const roomName = `${players[socket.id].nickname}'s Server`;
         
         rooms[roomId] = {
@@ -82,8 +78,6 @@ io.on('connection', (socket) => {
         if (p && p.roomId && rooms[p.roomId]) {
             p.team = team;
             rooms[p.roomId].players[socket.id].team = team;
-            
-            // Notify room of update
             io.to(p.roomId).emit('room_updated', rooms[p.roomId]);
         }
     });
@@ -98,28 +92,34 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GAME LOGIC (Scoped to Rooms) ---
-    // Previously we broadcasted to everyone. Now we use io.to(roomId)
+    // --- GAME LOGIC (Fast Relay) ---
 
+    // 1. MOVEMENT & STATE UPDATE
     socket.on('update', (data) => {
         const p = players[socket.id];
         if (p && p.roomId) {
+            // Update Server State
             p.position = data.pos;
             p.rotation = data.rot;
             p.weapon = data.weapon;
+            p.animState = data.animState; // Sync Animation Flags
             
+            // Broadcast to others in room (Volatile = Fire and Forget, good for movement)
             socket.to(p.roomId).volatile.emit('player_moved', {
                 id: socket.id,
                 pos: data.pos,
                 rot: data.rot,
-                weapon: data.weapon
+                weapon: data.weapon,
+                animState: data.animState
             });
         }
     });
 
+    // 2. SHOOTING (Critical reliability)
     socket.on('shoot', (data) => {
         const p = players[socket.id];
         if (p && p.roomId) {
+            // Relay shoot event to trigger visuals/sounds on other clients
             socket.to(p.roomId).emit('player_shot', {
                 id: socket.id,
                 origin: data.origin,
@@ -128,6 +128,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // 3. DAMAGE / HITS
     socket.on('hit', (data) => {
         const p = players[socket.id];
         if (!p || !p.roomId) return;
@@ -135,7 +136,6 @@ io.on('connection', (socket) => {
         const targetId = data.targetId;
         const target = players[targetId];
 
-        // Ensure target is in same room
         if (target && target.roomId === p.roomId) {
             target.health -= data.damage;
             io.to(p.roomId).emit('player_damaged', { id: targetId, health: target.health });
@@ -154,17 +154,12 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         const p = players[socket.id];
         if (p && p.roomId && rooms[p.roomId]) {
-            // Remove from room
             delete rooms[p.roomId].players[socket.id];
             io.to(p.roomId).emit('player_left', { id: socket.id });
             io.to(p.roomId).emit('room_updated', rooms[p.roomId]);
 
-            // If room empty, delete room
             if (Object.keys(rooms[p.roomId].players).length === 0) {
                 delete rooms[p.roomId];
-            } else if (p.isHost) {
-                // Transfer host? (Simple version: no transfer, just first remaining player becomes host or chaos)
-                // Let's keep it simple: Host leaves -> Room stays, no host functionality.
             }
         }
         delete players[socket.id];
@@ -178,19 +173,12 @@ function joinRoomLogic(socket, roomId, isHost) {
 
     p.roomId = roomId;
     p.isHost = isHost;
-    // Auto assign team if not set, or let them pick in lobby
     p.team = null; 
 
-    // Add to room data
     room.players[socket.id] = p;
 
-    // Socket join room channel
     socket.join(roomId);
-
-    // Notify client they joined
     socket.emit('room_joined', room);
-
-    // Notify others in room
     socket.to(roomId).emit('room_updated', room);
 }
 
