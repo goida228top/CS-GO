@@ -116,10 +116,29 @@ const BulletSystem = () => {
                         hitHandled = true;
                         // Alive Mannequin Logic
                         const impulseForce = direction.clone().multiplyScalar(window.GAME_SETTINGS.gunForce);
+                        
+                        // IDENTIFY HIT PART for Damage Calculation
+                        // The Hitbox component names meshes (or check hit.object.name if using named meshes)
+                        // Currently Hitboxes are children of the group. We can check object name if we name them, or check position.
+                        // NetworkPlayer.tsx names the group parts (via Hitbox but Hitbox doesn't propagate name well unless we pass it).
+                        // Let's assume the Hitbox mesh itself doesn't have a name, but we can pass it via props in NetworkPlayer.
+                        // Actually, NetworkPlayer.tsx Hitboxes are just groups.
+                        // We will rely on the fact that Hitbox creates a mesh. 
+                        
+                        // To improve this, we should rely on the hit.object's parent or userData if set.
+                        // In NetworkPlayer, we didn't strictly name the hitboxes.
+                        // However, we can use hit.object.position to guess, OR update Hitbox to take a name.
+                        
+                        // Simplification: We just send the event. ActivePlayer logic currently guesses multipliers based on name.
+                        // If name is generic, it defaults to BODY.
+                        // Let's rely on hit.object.name if available (Ragdoll has it).
+                        // For Mannequin/NetworkPlayer, we need to update Hitbox to accept name prop or we just default to Body.
+                        
                         const event = new CustomEvent('MANNEQUIN_HIT', { 
                             detail: { 
                                 id: obj.userData.id, 
-                                force: [impulseForce.x, impulseForce.y, impulseForce.z] 
+                                force: [impulseForce.x, impulseForce.y, impulseForce.z],
+                                partName: hit.object.name || 'body' // Pass the part name!
                             } 
                         });
                         window.dispatchEvent(event);

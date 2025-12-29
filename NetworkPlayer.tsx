@@ -162,13 +162,12 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
         <group ref={groupRef} position={[position.x, position.y, position.z]}>
             
             {/* INVISIBLE HITBOXES FOR RAYCASTING */}
-            {/* We attach these to the group so they move with the interpolated player */}
-            {/* IMPORTANT: We give them userData.id = network ID so ActivePlayer can identify who was shot */}
+            {/* Added 'name' prop to Hitbox so raycaster knows what was hit */}
             <group userData={{ isMannequin: true, id: id }}>
-                 <Hitbox position={bodyPos} args={BODY_HALF_SIZE} />
-                 <Hitbox position={headPos} args={HEAD_HALF_SIZE} />
-                 <Hitbox position={legLeftPos} args={LIMB_HALF_SIZE} />
-                 <Hitbox position={legRightPos} args={LIMB_HALF_SIZE} />
+                 <Hitbox name="body" position={bodyPos} args={BODY_HALF_SIZE} />
+                 <Hitbox name="head" position={headPos} args={HEAD_HALF_SIZE} />
+                 <Hitbox name="legLeft" position={legLeftPos} args={LIMB_HALF_SIZE} />
+                 <Hitbox name="legRight" position={legRightPos} args={LIMB_HALF_SIZE} />
             </group>
 
             {/* Nickname Tag */}
