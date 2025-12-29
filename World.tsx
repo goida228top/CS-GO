@@ -193,17 +193,8 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
 
   // SOCKET LISTENER
   useEffect(() => {
-      // FIX: Removed the early return check (if !socketManager.socket) which caused race conditions.
-      // We assume socketManager is singleton and handles its own state.
-      // We will add listeners safely.
-      
       const socket = socketManager.socket;
-      if (!socket) {
-          console.warn("Socket not initialized yet inside World. Waiting...");
-          // In a real app we might want a retry logic or context, but usually App.tsx init is fast enough.
-          // For now, if socket is missing, we miss listeners. But App.tsx calls connect() before rendering World.
-      }
-
+      
       const updatePlayers = () => {
           const others = Object.values(socketManager.otherPlayers || {});
           setNetworkPlayers([...others]);
@@ -215,13 +206,11 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
       if (socket) {
           // Listen to events that change player list
           socket.on('player_joined', (p) => {
-              console.log("Player joined:", p);
               socketManager.otherPlayers[p.id] = p;
               updatePlayers();
           });
 
           socket.on('current_players', (players) => {
-              console.log("Got existing players:", players);
               const others: any = {};
               Object.values(players).forEach((p: any) => {
                  if(p.id !== socket.id) others[p.id] = p;
@@ -241,9 +230,6 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
                   socketManager.otherPlayers[data.id].rotation = data.rot;
                   socketManager.otherPlayers[data.id].animState = data.animState; // Sync Anim State
                   socketManager.otherPlayers[data.id].weapon = data.weapon;
-                  // Don't re-render entire component on every frame move for perf,
-                  // NetworkPlayer handles its own Lerp via refs, but we need
-                  // to trigger if a NEW player appeared, which player_joined handles.
               }
           });
       }
@@ -303,8 +289,6 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
       {(gameMode === 'training' || isDev) && <PhysicsDragger />}
       
       <BulletSystem />
-      
-      {/* ModMenu removed from here, moved to App.tsx */}
     </group>
   );
 };

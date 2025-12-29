@@ -14,9 +14,111 @@ const io = new Server(server, {
     }
 });
 
+// --- CONSTANTS ---
+const WARMUP_TIME = 20;
+const FREEZE_TIME = 15;
+const ROUND_TIME = 600; // 10 minutes
+const END_TIME = 5;
+
 // --- DATA STORE ---
 let players = {}; 
 let rooms = {};
+
+// --- GAME LOOP ---
+setInterval(() => {
+    Object.values(rooms).forEach(room => {
+        if (room.status === 'playing') {
+            gameLoop(room);
+        }
+    });
+}, 1000);
+
+function gameLoop(room) {
+    if (!room.gameState) return;
+
+    room.gameState.timer--;
+
+    // Check Win Condition (Team Elimination) ONLY during 'live'
+    if (room.gameState.status === 'live') {
+        const aliveT = Object.values(room.players).filter(p => p.team === 'T' && !p.isDead).length;
+        const aliveCT = Object.values(room.players).filter(p => p.team === 'CT' && !p.isDead).length;
+        const totalT = Object.values(room.players).filter(p => p.team === 'T').length;
+        const totalCT = Object.values(room.players).filter(p => p.team === 'CT').length;
+
+        // If a team exists but has 0 alive players -> Lose
+        if (totalT > 0 && aliveT === 0) {
+            endRound(room, 'CT');
+            return;
+        }
+        if (totalCT > 0 && aliveCT === 0) {
+            endRound(room, 'T');
+            return;
+        }
+    }
+
+    // Timer Expiration Logic
+    if (room.gameState.timer <= 0) {
+        switch (room.gameState.status) {
+            case 'warmup':
+                startFreezeTime(room);
+                break;
+            case 'freeze':
+                startLiveRound(room);
+                break;
+            case 'live':
+                // Time ran out -> CT wins by default (defuse map logic)
+                endRound(room, 'CT'); 
+                break;
+            case 'end':
+                startFreezeTime(room); // Next round
+                break;
+        }
+    }
+
+    // Broadcast state update (optimized to sending minimal data)
+    io.to(room.id).emit('game_state_update', room.gameState);
+}
+
+function startWarmup(room) {
+    room.gameState.status = 'warmup';
+    room.gameState.timer = WARMUP_TIME;
+    io.to(room.id).emit('announcement', "РАЗМИНКА: 20 СЕКУНД");
+}
+
+function startFreezeTime(room) {
+    room.gameState.status = 'freeze';
+    room.gameState.timer = FREEZE_TIME;
+    room.gameState.round++;
+    
+    // Respawn everyone
+    Object.values(room.players).forEach(p => {
+        p.isDead = false;
+        p.health = 100;
+    });
+
+    io.to(room.id).emit('respawn_all'); // Client triggers position reset
+    io.to(room.id).emit('announcement', `РАУНД ${room.gameState.round} - ПОДГОТОВКА`);
+}
+
+function startLiveRound(room) {
+    room.gameState.status = 'live';
+    room.gameState.timer = ROUND_TIME;
+    io.to(room.id).emit('announcement', "БОЙ НАЧАЛСЯ!");
+}
+
+function endRound(room, winnerTeam) {
+    room.gameState.status = 'end';
+    room.gameState.timer = END_TIME;
+    room.gameState.winner = winnerTeam;
+    
+    if (winnerTeam === 'T') room.gameState.scoreT++;
+    else if (winnerTeam === 'CT') room.gameState.scoreCT++;
+
+    const winnerName = winnerTeam === 'T' ? "ТЕРРОРИСТЫ" : "СПЕЦНАЗ";
+    io.to(room.id).emit('announcement', `${winnerName} ПОБЕДИЛИ В РАУНДЕ!`);
+}
+
+// --- SOCKETS ---
 
 io.on('connection', (socket) => {
     console.log(`Player connected: ${socket.id}`);
@@ -38,8 +140,6 @@ io.on('connection', (socket) => {
         animState: { isCrouching: false, isMoving: false } 
     };
 
-    // --- LOBBY LOGIC ---
-
     socket.on('get_rooms', () => {
         const roomList = Object.values(rooms).map(r => ({
             id: r.id,
@@ -47,7 +147,8 @@ io.on('connection', (socket) => {
             map: r.map,
             players: Object.keys(r.players).length,
             maxPlayers: 10,
-            status: r.status
+            status: r.status,
+            gameState: r.gameState
         }));
         socket.emit('rooms_list', roomList);
     });
@@ -61,7 +162,15 @@ io.on('connection', (socket) => {
             name: roomName,
             map: data.map || 'de_dust2',
             players: {},
-            status: 'waiting'
+            status: 'waiting',
+            gameState: {
+                status: 'waiting',
+                timer: 0,
+                round: 0,
+                scoreT: 0,
+                scoreCT: 0,
+                winner: null
+            }
         };
 
         joinRoomLogic(socket, roomId, true);
@@ -87,6 +196,7 @@ io.on('connection', (socket) => {
         if (p && p.roomId && rooms[p.roomId]) {
             if (p.isHost) {
                 rooms[p.roomId].status = 'playing';
+                startWarmup(rooms[p.roomId]); // Start Warmup
                 io.to(p.roomId).emit('game_started');
             }
         }
@@ -94,17 +204,14 @@ io.on('connection', (socket) => {
 
     // --- GAME LOGIC ---
 
-    // 1. MOVEMENT & STATE UPDATE
     socket.on('update', (data) => {
         const p = players[socket.id];
         if (p && p.roomId) {
-            // Update Server State
             p.position = data.pos;
             p.rotation = data.rot;
             p.weapon = data.weapon;
             p.animState = data.animState;
             
-            // Broadcast to others (Removed volatile for smoother movement on standard connections)
             socket.to(p.roomId).emit('player_moved', {
                 id: socket.id,
                 pos: data.pos,
@@ -115,7 +222,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 2. SHOOTING
     socket.on('shoot', (data) => {
         const p = players[socket.id];
         if (p && p.roomId) {
@@ -127,47 +233,33 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 3. DAMAGE / HITS
     socket.on('hit', (data) => {
         const p = players[socket.id];
         if (!p || !p.roomId) return;
         
         const targetId = data.targetId;
         const target = players[targetId];
+        const room = rooms[p.roomId];
 
-        if (target && target.roomId === p.roomId) {
+        // Only allow damage if game is live or warmup (not freeze or end)
+        const canDamage = room.gameState.status === 'live' || room.gameState.status === 'warmup';
+
+        if (target && target.roomId === p.roomId && canDamage && !target.isDead) {
             target.health -= data.damage;
             io.to(p.roomId).emit('player_damaged', { id: targetId, health: target.health });
 
-            if (target.health <= 0 && !target.isDead) {
+            if (target.health <= 0) {
                 target.isDead = true;
                 target.deaths = (target.deaths || 0) + 1;
                 
-                // Broadcast death AND update internal room state so new joiners see them dead
-                if (rooms[p.roomId].players[targetId]) {
-                    rooms[p.roomId].players[targetId].isDead = true;
-                }
+                if (room.players[targetId]) room.players[targetId].isDead = true;
                 
                 io.to(p.roomId).emit('player_died', { 
                     victimId: targetId, 
                     killerId: socket.id,
-                    force: data.force || {x:0, y:0, z:0} // Pass force for ragdoll
+                    force: data.force || {x:0, y:0, z:0}
                 });
             }
-        }
-    });
-    
-    // 4. RESPAWN (Simple logic for now)
-    socket.on('request_respawn', () => {
-        const p = players[socket.id];
-        if (p && p.roomId) {
-            p.isDead = false;
-            p.health = 100;
-            if (rooms[p.roomId].players[socket.id]) {
-                rooms[p.roomId].players[socket.id].isDead = false;
-                rooms[p.roomId].players[socket.id].health = 100;
-            }
-            io.to(p.roomId).emit('player_respawned', { id: socket.id });
         }
     });
 

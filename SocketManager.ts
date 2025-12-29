@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { PlayerProfile, GameRoom } from './types';
+import { PlayerProfile, GameRoom, GameState } from './types';
 
 // URL твоего сервера
 const SERVER_URL = 'https://cs-go-3mje.onrender.com';
@@ -7,12 +7,16 @@ const SERVER_URL = 'https://cs-go-3mje.onrender.com';
 class SocketManager {
     public socket: Socket | null = null;
     public otherPlayers: any = {};
-    public currentRoom: any = null; // Cache room state
+    public currentRoom: any = null; 
     
-    // Callbacks for UI
+    // Callbacks
     public onRoomListUpdate: ((rooms: GameRoom[]) => void) | null = null;
     public onRoomJoined: ((roomState: any) => void) | null = null;
     public onGameStart: (() => void) | null = null;
+    public onGameStateUpdate: ((state: GameState) => void) | null = null;
+    public onAnnouncement: ((msg: string) => void) | null = null;
+    public onRespawnAll: (() => void) | null = null;
+    public onLocalDeath: ((killerId: string) => void) | null = null;
 
     connect(profile: PlayerProfile) {
         if (this.socket && this.socket.connected) return;
@@ -57,6 +61,22 @@ class SocketManager {
              if (this.onGameStart) this.onGameStart();
         });
 
+        // --- GAME LOOP EVENTS ---
+        this.socket.on('game_state_update', (state: GameState) => {
+            if (this.onGameStateUpdate) this.onGameStateUpdate(state);
+        });
+
+        this.socket.on('announcement', (msg: string) => {
+            if (this.onAnnouncement) this.onAnnouncement(msg);
+        });
+
+        this.socket.on('respawn_all', () => {
+             // Reset local death state logic
+             if (this.onRespawnAll) this.onRespawnAll();
+             // Reset other players
+             Object.values(this.otherPlayers).forEach((p: any) => p.isDead = false);
+        });
+
         // --- GAMEPLAY EVENTS ---
         this.socket.on('player_moved', (data) => {
              if (this.otherPlayers[data.id]) {
@@ -86,24 +106,30 @@ class SocketManager {
             const event = new CustomEvent('FIRE_BULLET', { 
                 detail: { 
                     position: data.origin, 
-                    velocity: { x: data.direction.x * 150, y: data.direction.y * 150, z: data.direction.z * 150 } // approx speed
+                    velocity: { x: data.direction.x * 150, y: data.direction.y * 150, z: data.direction.z * 150 } 
                 } 
             });
             window.dispatchEvent(event);
         });
 
-        // Update Death State
         this.socket.on('player_died', (data) => {
-            const { victimId, force } = data;
+            const { victimId, killerId, force } = data;
+            
+            // Handle Other Players
             if (this.otherPlayers[victimId]) {
                 this.otherPlayers[victimId].isDead = true;
                 this.otherPlayers[victimId].deathForce = force;
             }
+
+            // Handle Local Player Death
+            if (this.socket && victimId === this.socket.id) {
+                if (this.onLocalDeath) this.onLocalDeath(killerId);
+            }
         });
 
-        this.socket.on('player_respawned', (data) => {
-             if (this.otherPlayers[data.id]) {
-                 this.otherPlayers[data.id].isDead = false;
+        this.socket.on('player_damaged', (data) => {
+             if (this.socket && data.id === this.socket.id) {
+                 window.dispatchEvent(new CustomEvent('LOCAL_DAMAGE', { detail: data.health }));
              }
         });
 

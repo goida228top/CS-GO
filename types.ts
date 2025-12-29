@@ -44,14 +44,26 @@ export interface PlayerProfile {
     team?: Team;
 }
 
-// --- ROOM TYPES ---
+// --- ROOM & GAME STATE ---
+export type RoundStatus = 'waiting' | 'warmup' | 'freeze' | 'live' | 'end';
+
+export interface GameState {
+    status: RoundStatus;
+    timer: number; // Seconds remaining
+    round: number;
+    scoreT: number;
+    scoreCT: number;
+    winner: Team | null; // Winner of last round
+}
+
 export interface GameRoom {
     id: string;
-    name: string; // Usually "Player's Room"
+    name: string; 
     map: string;
     players: number;
     maxPlayers: number;
     status: 'waiting' | 'playing';
+    gameState?: GameState;
 }
 
 declare global {

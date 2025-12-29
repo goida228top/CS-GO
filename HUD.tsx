@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PlayerProfile } from './types';
+import { PlayerProfile, GameState } from './types';
 
 // Simple cross icon for HP
 const MedicalCross = () => (
@@ -15,11 +15,17 @@ interface HUDProps {
 
 export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
     const [state, setState] = useState({ visible: false, ammo: 0, isReloading: false, health: 100 });
+    const [scoreState, setScoreState] = useState<GameState>({
+        status: 'waiting',
+        timer: 0,
+        round: 0,
+        scoreT: 0,
+        scoreCT: 0,
+        winner: null
+    });
     
     // Default avatar color if none
     const myColor = userProfile?.avatarColor || '#3b82f6';
-    
-    // Используем ref для координат, чтобы не вызывать ререндер всего компонента 60 раз в секунду
     const posRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -34,16 +40,29 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
             }
         };
 
+        const handleScoreUpdate = (e: any) => {
+             if (e.detail) setScoreState(e.detail);
+        };
+
         window.addEventListener('HUD_UPDATE', handleUpdate);
         window.addEventListener('HUD_POS_UPDATE', handlePosUpdate);
+        window.addEventListener('SCORE_UPDATE', handleScoreUpdate);
         
         return () => {
             window.removeEventListener('HUD_UPDATE', handleUpdate);
             window.removeEventListener('HUD_POS_UPDATE', handlePosUpdate);
+            window.removeEventListener('SCORE_UPDATE', handleScoreUpdate);
         };
     }, []);
 
     const isCT = userProfile?.team === 'CT' || !userProfile?.team;
+
+    // Format timer (seconds to MM:SS)
+    const formatTime = (seconds: number) => {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
     
     return (
         <div className="absolute inset-0 pointer-events-none z-20 font-sans select-none">
@@ -54,25 +73,28 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
                     
                     {/* CT Side (Left) */}
                     <div className="flex items-center px-4 py-2 bg-gradient-to-r from-cyan-900/60 to-transparent gap-3 min-w-[120px] justify-start">
-                        {/* Avatar */}
                         <div 
                             className="w-8 h-8 rounded flex items-center justify-center shadow-inner border border-white/20" 
                             style={{ backgroundColor: isCT ? myColor : '#333' }}
                         >
                             {isCT && <span className="text-[10px] text-white/50 font-bold">{userProfile?.nickname?.slice(0,2).toUpperCase()}</span>}
                         </div>
-                        <span className={`font-black text-2xl drop-shadow-md ${isCT ? 'text-white' : 'text-gray-500'}`}>0</span>
+                        <span className={`font-black text-2xl drop-shadow-md text-cyan-400`}>{scoreState.scoreCT}</span>
                     </div>
 
                     {/* Timer (Middle) */}
-                    <div className="flex items-center justify-center px-4 py-2 border-x border-white/10 min-w-[80px] bg-black/40">
-                        <span className="text-white font-mono font-bold text-xl tracking-widest opacity-90">01:55</span>
+                    <div className="flex flex-col items-center justify-center px-4 py-2 border-x border-white/10 min-w-[80px] bg-black/40">
+                        <span className="text-white font-mono font-bold text-xl tracking-widest opacity-90">
+                            {formatTime(scoreState.timer)}
+                        </span>
+                        <span className="text-[9px] text-white/50 uppercase tracking-widest">
+                            R {scoreState.round} | {scoreState.status.toUpperCase()}
+                        </span>
                     </div>
 
                     {/* T Side (Right) */}
                     <div className="flex items-center px-4 py-2 bg-gradient-to-l from-orange-900/60 to-transparent gap-3 min-w-[120px] justify-end">
-                         <span className={`font-black text-2xl drop-shadow-md ${!isCT ? 'text-white' : 'text-gray-500'}`}>0</span>
-                        {/* Avatar */}
+                         <span className={`font-black text-2xl drop-shadow-md text-orange-400`}>{scoreState.scoreT}</span>
                         <div 
                              className="w-8 h-8 rounded flex items-center justify-center shadow-inner border border-white/20"
                              style={{ backgroundColor: !isCT ? myColor : '#333' }}
@@ -99,18 +121,14 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
                 <div className="flex gap-2">
                     <div className="flex flex-col gap-1">
                         {/* HP BAR */}
-                        <div className="flex items-center bg-black/60 backdrop-blur px-6 py-3 rounded-tr-xl rounded-bl-xl border-l-4 border-lime-500 shadow-lg">
+                        <div className={`flex items-center bg-black/60 backdrop-blur px-6 py-3 rounded-tr-xl rounded-bl-xl border-l-4 shadow-lg ${state.health <= 20 ? 'border-red-600 animate-pulse' : 'border-lime-500'}`}>
                              <MedicalCross />
                              <div className="flex flex-col justify-center h-full">
-                                <span className="text-4xl font-black text-white leading-none tracking-wide drop-shadow-md">
+                                <span className={`text-4xl font-black leading-none tracking-wide drop-shadow-md ${state.health <= 20 ? 'text-red-500' : 'text-white'}`}>
                                     {state.health}
                                 </span>
                              </div>
                         </div>
-                        {/* ARMOR BAR (Fake for now) */}
-                         <div className="flex items-center bg-black/40 backdrop-blur px-4 py-1 rounded-r-lg border-l-4 border-cyan-500 shadow-lg w-fit mt-1">
-                             <span className="text-xs text-cyan-200 font-bold tracking-wider">🛡️ 100</span>
-                         </div>
                     </div>
                 </div>
 
@@ -125,7 +143,6 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
                                 <span className="text-xs text-gray-400 font-bold tracking-wider">/ ∞</span>
                             </div>
                             <div className="h-8 w-[1px] bg-white/20 mx-2"></div>
-                             {/* Simple icon for bullet */}
                             <div className="text-3xl">|||</div>
                         </div>
                         
