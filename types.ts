@@ -38,9 +38,20 @@ export type Keys = keyof ControlState;
 export type Team = 'T' | 'CT' | 'SPECTATOR';
 
 export interface PlayerProfile {
+    id?: string; // Socket ID
     nickname: string;
     avatarColor: string; // Hex code
     team?: Team;
+}
+
+// --- ROOM TYPES ---
+export interface GameRoom {
+    id: string;
+    name: string; // Usually "Player's Room"
+    map: string;
+    players: number;
+    maxPlayers: number;
+    status: 'waiting' | 'playing';
 }
 
 declare global {

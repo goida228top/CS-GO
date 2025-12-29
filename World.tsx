@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { MapModel } from './MapModel';
 import { Mannequin } from './Mannequin';
 import { PhysicsDragger } from './PhysicsDragger';
-import { ModMenu } from './ModMenu';
+// ModMenu moved to App.tsx
 import { NetworkPlayer } from './NetworkPlayer'; // IMPORT
 import { socketManager } from './SocketManager'; // IMPORT
 import './gameConfig'; 
@@ -193,56 +193,66 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
 
   // SOCKET LISTENER
   useEffect(() => {
-      if (!socketManager.socket) return;
+      // FIX: Removed the early return check (if !socketManager.socket) which caused race conditions.
+      // We assume socketManager is singleton and handles its own state.
+      // We will add listeners safely.
+      
+      const socket = socketManager.socket;
+      if (!socket) {
+          console.warn("Socket not initialized yet inside World. Waiting...");
+          // In a real app we might want a retry logic or context, but usually App.tsx init is fast enough.
+          // For now, if socket is missing, we miss listeners. But App.tsx calls connect() before rendering World.
+      }
 
       const updatePlayers = () => {
           const others = Object.values(socketManager.otherPlayers || {});
           setNetworkPlayers([...others]);
       };
+      
+      // Initialize with whatever we have right now
+      updatePlayers();
 
-      // Listen to events that change player list
-      socketManager.socket.on('player_joined', (p) => {
-          console.log("Player joined:", p);
-          socketManager.otherPlayers[p.id] = p;
-          updatePlayers();
-      });
-
-      socketManager.socket.on('current_players', (players) => {
-          console.log("Got existing players:", players);
-          // Remove self from list
-          const others: any = {};
-          Object.values(players).forEach((p: any) => {
-             if(p.id !== socketManager.socket?.id) others[p.id] = p;
+      if (socket) {
+          // Listen to events that change player list
+          socket.on('player_joined', (p) => {
+              console.log("Player joined:", p);
+              socketManager.otherPlayers[p.id] = p;
+              updatePlayers();
           });
-          socketManager.otherPlayers = others;
-          updatePlayers();
-      });
 
-      socketManager.socket.on('player_left', ({ id }) => {
-          delete socketManager.otherPlayers[id];
-          updatePlayers();
-      });
+          socket.on('current_players', (players) => {
+              console.log("Got existing players:", players);
+              const others: any = {};
+              Object.values(players).forEach((p: any) => {
+                 if(p.id !== socket.id) others[p.id] = p;
+              });
+              socketManager.otherPlayers = others;
+              updatePlayers();
+          });
 
-      // For movement, we usually update the ref directly in NetworkPlayer via event,
-      // but here we are using a simple state for the list.
-      // We need to pass the movement data down.
-      socketManager.socket.on('player_moved', (data) => {
-          if (socketManager.otherPlayers[data.id]) {
-              socketManager.otherPlayers[data.id].position = data.pos;
-              socketManager.otherPlayers[data.id].rotation = data.rot;
-              // Force re-render not needed for every frame if we used refs, 
-              // but we are using state for the list. 
-              // Optimization: We will let NetworkPlayer handle its own interpolation
-              // But we need to update the state to trigger prop updates.
-              setNetworkPlayers(Object.values(socketManager.otherPlayers));
-          }
-      });
+          socket.on('player_left', ({ id }) => {
+              delete socketManager.otherPlayers[id];
+              updatePlayers();
+          });
+
+          socket.on('player_moved', (data) => {
+              if (socketManager.otherPlayers[data.id]) {
+                  socketManager.otherPlayers[data.id].position = data.pos;
+                  socketManager.otherPlayers[data.id].rotation = data.rot;
+                  // Don't re-render entire component on every frame move for perf,
+                  // NetworkPlayer handles its own Lerp via refs, but we need
+                  // to trigger if a NEW player appeared, which player_joined handles.
+              }
+          });
+      }
 
       return () => {
-          socketManager.socket?.off('player_joined');
-          socketManager.socket?.off('current_players');
-          socketManager.socket?.off('player_left');
-          socketManager.socket?.off('player_moved');
+          if (socket) {
+              socket.off('player_joined');
+              socket.off('current_players');
+              socket.off('player_left');
+              socket.off('player_moved');
+          }
       };
   }, []);
 
@@ -291,7 +301,7 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
       
       <BulletSystem />
       
-      <ModMenu isDev={isDev} gameMode={gameMode} />
+      {/* ModMenu removed from here, moved to App.tsx */}
     </group>
   );
 };

@@ -63,6 +63,9 @@ const accelerate = (vel: Vector3, wishDir: Vector3, wishSpeed: number, accel: nu
     return vel;
 };
 
+// SPAWN POINT CONSTANT
+const SPAWN_POS: [number, number, number] = [-0.77, 2.89, 10.13];
+
 export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean, onBuyMenuToggle: (v: boolean) => void }) => {
   const meshRef = useRef<Object3D>(null);
   const modelContainerRef = useRef<Object3D>(null);
@@ -242,6 +245,29 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         }
     }
 
+    // --- FIX: WAIT FOR MAP TO LOAD ---
+    // If map is not loaded yet, finding it or freezing player to prevent falling.
+    if (!mapObjectRef.current) {
+        const map = scene.getObjectByName('environment');
+        if (map) {
+            mapObjectRef.current = map;
+        } else {
+            // Freeze player at spawn
+            if (meshRef.current) {
+                meshRef.current.position.set(SPAWN_POS[0], SPAWN_POS[1], SPAWN_POS[2]);
+                velocityRef.current.set(0,0,0);
+            }
+            if (rbRef.current) {
+                 rbRef.current.setNextKinematicTranslation({
+                     x: SPAWN_POS[0], 
+                     y: SPAWN_POS[1] + 0.9, 
+                     z: SPAWN_POS[2]
+                 });
+            }
+            return; // SKIP PHYSICS
+        }
+    }
+
     // Shooting Logic
     const canShoot = isEquipped && isLocked && !isReloading && !isBuyMenuOpen;
     const isAuto = currentWeapon.auto;
@@ -324,6 +350,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     if (foundRightArmForWeapon) forceUpdate({});
   }, [modelScene]);
 
+  // Keep this for redundancy, but useFrame handles the lock now
   useEffect(() => {
       const interval = setInterval(() => { const map = scene.getObjectByName('environment'); if (map) { mapObjectRef.current = map; clearInterval(interval); } }, 500);
       return () => clearInterval(interval);
@@ -384,6 +411,10 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime(); 
     if (!meshRef.current) return;
+    
+    // SKIP if Map not loaded (handled at start of useFrame)
+    if (!mapObjectRef.current) return;
+
     const cameraYaw = rotationRef.current.yaw;
     const cameraPitch = rotationRef.current.pitch;
     
@@ -568,12 +599,12 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             ref={rbRef} 
             type="kinematicPosition" 
             colliders={false}
-            position={[0, 5, 0]} // Initial pos
+            position={SPAWN_POS} // Use Updated Spawn
         >
             <CapsuleCollider args={[0.5, 0.3]} />
         </RigidBody>
 
-        <group ref={meshRef} position={[0, 5, 0]}>
+        <group ref={meshRef} position={SPAWN_POS}>
             <group ref={modelContainerRef} position={[0, 0, 0]}>
                 <primitive object={modelScene} scale={0.66} rotation={[0, Math.PI, 0]} />
                 {isThirdPerson && rightArmBoneRef.current && isEquipped && createPortal(

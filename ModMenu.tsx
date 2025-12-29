@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Html } from '@react-three/drei';
 
 interface ModMenuProps {
     isDev: boolean;
@@ -25,8 +24,8 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
                 return;
             }
 
-            // Dev Mode -> Left Shift
-            if (isDev && e.code === 'ShiftLeft') {
+            // Dev Mode -> Control Key (Changed from Shift)
+            if (isDev && (e.code === 'ControlLeft' || e.key === 'Control')) {
                 setVisible(v => !v);
             }
         };
@@ -55,82 +54,81 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
 
     if (!visible) return null;
 
+    // Standard HTML Overlay (No <Html> from drei)
     return (
-        <Html fullscreen style={{ pointerEvents: 'none', zIndex: 1000 }}>
-            <div className="absolute top-1/2 left-20 -translate-y-1/2 w-80 bg-black/95 text-white p-6 rounded-xl border-2 border-red-600 pointer-events-auto font-mono text-sm shadow-[0_0_50px_rgba(220,38,38,0.5)]">
-                
-                <div className="flex justify-between items-center mb-6 border-b border-red-800 pb-2">
-                    <h2 className="text-2xl font-black text-red-500 italic tracking-widest">
-                        {isDev ? "HACK_MENU_V3" : "TRAINING_MENU"}
-                    </h2>
-                    <span className="text-xs text-gray-500">{isDev ? "DEV_ACCESS" : "USER"}</span>
+        <div className="absolute top-1/2 left-20 -translate-y-1/2 w-80 bg-black/95 text-white p-6 rounded-xl border-2 border-red-600 font-mono text-sm shadow-[0_0_50px_rgba(220,38,38,0.5)] z-50 pointer-events-auto">
+            
+            <div className="flex justify-between items-center mb-6 border-b border-red-800 pb-2">
+                <h2 className="text-2xl font-black text-red-500 italic tracking-widest">
+                    {isDev ? "HACK_MENU_V3" : "TRAINING_MENU"}
+                </h2>
+                <span className="text-xs text-gray-500">{isDev ? "DEV_ACCESS" : "USER"}</span>
+            </div>
+            
+            {/* CHEATS SECTION */}
+            <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
+                    <span className="font-bold text-lg">WALLHACK (ESP)</span>
+                    <div 
+                        onClick={() => setWallhack(!wallhack)}
+                        className={`w-12 h-6 rounded-full relative cursor-pointer ${wallhack ? 'bg-red-500' : 'bg-gray-700'}`}
+                    >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wallhack ? 'left-7' : 'left-1'}`} />
+                    </div>
                 </div>
-                
-                {/* CHEATS SECTION */}
-                <div className="space-y-4">
-                    <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                        <span className="font-bold text-lg">WALLHACK (ESP)</span>
-                        <div 
-                            onClick={() => setWallhack(!wallhack)}
-                            className={`w-12 h-6 rounded-full relative cursor-pointer ${wallhack ? 'bg-red-500' : 'bg-gray-700'}`}
-                        >
-                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wallhack ? 'left-7' : 'left-1'}`} />
+
+                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
+                        <div className="flex flex-col">
+                        <span className="font-bold text-lg">AIMBOT</span>
+                        <span className="text-[10px] text-gray-500">AUTO-LOCK ON HEAD</span>
                         </div>
+                    <div 
+                        onClick={() => setAimbot(!aimbot)}
+                        className={`w-12 h-6 rounded-full relative cursor-pointer ${aimbot ? 'bg-red-500' : 'bg-gray-700'}`}
+                    >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${aimbot ? 'left-7' : 'left-1'}`} />
                     </div>
+                </div>
 
-                    <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                         <div className="flex flex-col">
-                            <span className="font-bold text-lg">AIMBOT</span>
-                            <span className="text-[10px] text-gray-500">AUTO-LOCK ON HEAD</span>
-                         </div>
-                        <div 
-                            onClick={() => setAimbot(!aimbot)}
-                            className={`w-12 h-6 rounded-full relative cursor-pointer ${aimbot ? 'bg-red-500' : 'bg-gray-700'}`}
-                        >
-                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${aimbot ? 'left-7' : 'left-1'}`} />
+                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
+                        <div className="flex flex-col">
+                        <span className="font-bold text-lg">FLY MODE</span>
+                        <span className="text-[10px] text-gray-500">PRESS 'V' TO TOGGLE</span>
                         </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                         <div className="flex flex-col">
-                            <span className="font-bold text-lg">FLY MODE</span>
-                            <span className="text-[10px] text-gray-500">PRESS 'V' TO TOGGLE</span>
-                         </div>
-                         <div className={`text-xs font-bold ${isDev || gameMode === 'training' ? 'text-green-500' : 'text-red-500'}`}>
-                             {isDev || gameMode === 'training' ? "UNLOCKED" : "LOCKED"}
-                         </div>
-                    </div>
-                </div>
-
-                {/* SLIDERS */}
-                <div className="mt-6 pt-4 border-t border-gray-800">
-                    <div className="mb-3">
-                        <label className="block mb-1 text-gray-400 font-bold uppercase">Physics Punch Force</label>
-                        <input 
-                            type="range" 
-                            min="0" 
-                            max="5" 
-                            step="0.1"
-                            value={force} 
-                            onChange={(e) => updateForce(Number(e.target.value))}
-                            className="w-full accent-red-500"
-                        />
-                        <div className="text-right text-xs text-red-400">{force.toFixed(1)}x</div>
-                    </div>
-                </div>
-
-                <button 
-                    onClick={respawn}
-                    className="w-full mt-4 py-3 bg-red-900/20 hover:bg-red-600 text-red-500 hover:text-white font-black uppercase tracking-widest rounded border border-red-900 transition-all hover:shadow-[0_0_15px_red]"
-                >
-                    RESET MAP OBJECTS
-                </button>
-                
-                <div className="mt-4 text-[10px] text-center text-gray-600 font-mono">
-                    build_version: 0.9.1-alpha <br/>
-                    uid: {isDev ? "admin_root" : "guest"}
+                        <div className={`text-xs font-bold ${isDev || gameMode === 'training' ? 'text-green-500' : 'text-red-500'}`}>
+                            {isDev || gameMode === 'training' ? "UNLOCKED" : "LOCKED"}
+                        </div>
                 </div>
             </div>
-        </Html>
+
+            {/* SLIDERS */}
+            <div className="mt-6 pt-4 border-t border-gray-800">
+                <div className="mb-3">
+                    <label className="block mb-1 text-gray-400 font-bold uppercase">Physics Punch Force</label>
+                    <input 
+                        type="range" 
+                        min="0" 
+                        max="5" 
+                        step="0.1"
+                        value={force} 
+                        onChange={(e) => updateForce(Number(e.target.value))}
+                        className="w-full accent-red-500"
+                    />
+                    <div className="text-right text-xs text-red-400">{force.toFixed(1)}x</div>
+                </div>
+            </div>
+
+            <button 
+                onClick={respawn}
+                className="w-full mt-4 py-3 bg-red-900/20 hover:bg-red-600 text-red-500 hover:text-white font-black uppercase tracking-widest rounded border border-red-900 transition-all hover:shadow-[0_0_15px_red]"
+            >
+                RESET MAP OBJECTS
+            </button>
+            
+            <div className="mt-4 text-[10px] text-center text-gray-600 font-mono">
+                build_version: 0.9.1-alpha <br/>
+                uid: {isDev ? "admin_root" : "guest"}
+            </div>
+        </div>
     );
 };

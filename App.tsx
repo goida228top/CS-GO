@@ -6,12 +6,14 @@ import { Player } from './Player';
 import { World } from './World';
 import { Loader } from './Loader';
 import { MainMenu } from './MainMenu';
-import { TeamSelect } from './TeamSelect';
+import { ServerBrowser } from './ServerBrowser'; // IMPORT
+import { TeamSelect } from './TeamSelect'; // THIS IS NOW THE LOBBY
 import { PointerLocker } from './PointerLocker';
 import { HUD } from './HUD';
 import { BuyMenu } from './BuyMenu';
+import { ModMenu } from './ModMenu'; 
 import { PlayerProfile, Team } from './types';
-import { socketManager } from './SocketManager'; // IMPORT
+import { socketManager } from './SocketManager'; 
 
 // Helper to safely request lock without throwing unhandled rejections
 const safeRequestLock = () => {
@@ -33,8 +35,9 @@ const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
   
   // Game Flow State
+  // Steps: 'menu' -> 'browser' (if online) -> 'lobby' -> 'game'
+  const [gameStep, setGameStep] = useState<'menu' | 'browser' | 'lobby' | 'game'>('menu');
   const [gameMode, setGameMode] = useState<string>('training');
-  const [showTeamSelect, setShowTeamSelect] = useState(false);
   
   // User Data
   const [userProfile, setUserProfile] = useState<PlayerProfile>({
@@ -51,7 +54,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          if (e.code === 'ShiftLeft') {
+          // Changed to CONTROL key
+          if (e.ctrlKey || e.code === 'ControlLeft') {
               const now = Date.now();
               // < 500ms between presses
               if (now - lastShiftTime.current < 500) {
@@ -81,7 +85,6 @@ const App: React.FC = () => {
 
   const { active } = useProgress();
   
-  // Use Vector3 as requested by the type definition in error
   const gravity = useMemo<[number, number, number]>(() => [0, -20, 0], []);
   
   useEffect(() => {
@@ -95,29 +98,30 @@ const App: React.FC = () => {
       setGameMode(modeId);
       setUserProfile(profile);
       
-      // If Mode is Duel or Bomb or TDM, show Team Select first
       if (modeId === 'duel' || modeId === 'bomb' || modeId === 'tdm') {
-          setShowTeamSelect(true);
+          // Online Modes -> Go to Server Browser
+          setGameStep('browser');
       } else {
-          // Training mode skips team select (Defaults to CT usually or just free roam)
-          startGame();
+          // Training -> Start immediately
+          startGame(false);
       }
   };
 
-  const handleTeamSelected = (team: Team) => {
+  const handleRoomJoined = () => {
+      // Called when ServerBrowser successfully joins/creates a room
+      setGameStep('lobby');
+  };
+
+  const handleLobbyStart = (team: Team) => {
+      // Called when Lobby (TeamSelect) confirms start
       setUserProfile(prev => ({ ...prev, team }));
-      setShowTeamSelect(false);
-      startGame(true); // Is Online
+      startGame(true);
   };
 
   const startGame = (online = false) => {
+      setGameStep('game');
       setGameStarted(true);
       safeRequestLock();
-      
-      // Connect to server if it's an online mode
-      if (online || gameMode === 'duel' || gameMode === 'tdm') {
-          socketManager.connect(userProfile);
-      }
   };
   
   const handleBuyMenuToggle = (isOpen: boolean) => {
@@ -142,15 +146,27 @@ const App: React.FC = () => {
           isOpen={isBuyMenuOpen} 
           onClose={() => handleBuyMenuToggle(false)} 
       />
+
+      {/* DEV MOD MENU */}
+      <ModMenu isDev={isDev} gameMode={gameMode} />
       
       {/* Step 1: Main Menu */}
-      {!gameStarted && !showTeamSelect && ready && (
+      {gameStep === 'menu' && ready && (
           <MainMenu onPlay={handlePlay} />
       )}
 
-      {/* Step 2: Team Select (Overlay) */}
-      {!gameStarted && showTeamSelect && (
-          <TeamSelect userProfile={userProfile} onSelectTeam={handleTeamSelected} />
+      {/* Step 2: Server Browser (Online Only) */}
+      {gameStep === 'browser' && (
+          <ServerBrowser 
+            userProfile={userProfile} 
+            onBack={() => setGameStep('menu')}
+            onRoomJoined={handleRoomJoined}
+          />
+      )}
+
+      {/* Step 3: Lobby (Wait for start) */}
+      {gameStep === 'lobby' && (
+          <TeamSelect userProfile={userProfile} onSelectTeam={handleLobbyStart} />
       )}
 
       {/* Pause Screen */}
@@ -162,7 +178,7 @@ const App: React.FC = () => {
              <p>WASD - Move | SPACE - Jump</p>
              <p>B - Buy Menu</p>
              <p>F - Inspect | R - Reload</p>
-             {isDev && <p className="text-lime-400 mt-2 font-bold animate-pulse">DEV MODE: PRESS L-SHIFT FOR CHEATS</p>}
+             {isDev && <p className="text-lime-400 mt-2 font-bold animate-pulse">DEV MODE: PRESS CTRL FOR CHEATS</p>}
           </div>
         </div>
       )}
