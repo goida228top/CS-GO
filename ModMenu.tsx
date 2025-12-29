@@ -47,6 +47,12 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
         window.dispatchEvent(new Event('RESPAWN_ALL'));
     };
 
+    // Prevent clicks inside the menu from propagating to the game (locking mouse)
+    const handleMenuClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
+    };
+
     if (!visible) return null;
 
     const renderToggle = (label: string, cheatKey: keyof typeof window.CHEATS, desc: string) => (
@@ -70,7 +76,11 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
     );
 
     return (
-        <div className="absolute inset-0 z-[999] bg-black/60 backdrop-blur-sm flex items-center justify-center font-sans">
+        <div 
+            className="absolute inset-0 z-[999] bg-black/60 backdrop-blur-sm flex items-center justify-center font-sans"
+            onMouseDown={handleMenuClick} 
+            onClick={handleMenuClick}
+        >
             <div className="w-[800px] h-[600px] flex bg-[#111] rounded-xl overflow-hidden border border-gray-700 shadow-2xl">
                 
                 {/* SIDEBAR */}
@@ -110,7 +120,7 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
 
                     {activeTab === 'COMBAT' && (
                         <div className="grid grid-cols-1 gap-2">
-                            {renderToggle('KILL AURA', 'aimbot', 'Auto-locks on nearest enemy head')}
+                            {renderToggle('KILL AURA', 'aimbot', 'Auto-locks on nearest enemy head (Silent Aim)')}
                             {renderToggle('RAPID FIRE', 'rapidFire', 'Removes weapon fire rate limit')}
                             {renderToggle('AUTO PISTOL', 'autoPistol', 'Makes pistols fully automatic')}
                         </div>
@@ -127,8 +137,9 @@ export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
                         <div className="grid grid-cols-1 gap-2">
                             {renderToggle('GOD MODE', 'godMode', 'Invulnerability to damage')}
                             {renderToggle('FLIGHT', 'fly', 'Fly like a bird (Press V)')}
+                            {renderToggle('BUNNYHOP', 'bunnyhop', 'Auto jump + Air strafe + Speed boost')}
                             {renderToggle('NO RELOAD', 'infiniteAmmo', 'Infinite clip size')}
-                            {renderToggle('SPEED', 'speedhack', 'Increases movement speed')}
+                            {renderToggle('SPEED', 'speedhack', 'Increases movement speed (Ground Only)')}
                         </div>
                     )}
 

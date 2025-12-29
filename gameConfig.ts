@@ -17,7 +17,8 @@ if (typeof window !== 'undefined') {
       rapidFire: false,
       autoPistol: false,
       fly: false,
-      speedhack: false
+      speedhack: false,
+      bunnyhop: false
   };
 }
 

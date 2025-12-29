@@ -220,33 +220,29 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
 
             {/* ESP OVERLAY */}
             {showEsp && (
-                <Html position={[0, 1, 0]} center occlude={false} distanceFactor={15} zIndexRange={[100, 0]}>
-                    <div className="relative w-32 h-64 pointer-events-none select-none">
+                // Adjusted y position (1 -> 0.9) and distanceFactor for better sizing
+                <Html position={[0, 0.9, 0]} center occlude={false} distanceFactor={15} zIndexRange={[100, 0]}>
+                    <div className="relative w-14 h-32 pointer-events-none select-none">
                         {/* 2D BOX */}
                         <div 
                             className="absolute inset-0 border-2"
                             style={{ 
                                 borderColor: boxColor,
-                                boxShadow: `0 0 10px ${boxColor}, inset 0 0 10px ${boxColor}20`
+                                boxShadow: `0 0 10px ${boxColor}, inset 0 0 5px ${boxColor}20`
                             }}
                         ></div>
                         
                         {/* HEALTH BAR */}
-                        <div className="absolute -left-3 top-0 bottom-0 w-1 bg-gray-800">
-                             {/* For now we assume 100 HP since we don't sync HP of others perfectly yet, 
-                                 or we can update it if socket sends it. 
-                                 SocketManager sends 'player_damaged' events, but we store it in local state there?
-                                 We can access socketManager.otherPlayers[id].health if we updated the server to sync it.
-                             */}
+                        <div className="absolute -left-2 top-0 bottom-0 w-1 bg-gray-800">
                              <div className="absolute bottom-0 left-0 w-full bg-green-500" style={{ height: '100%' }}></div>
                         </div>
 
                         {/* NAME */}
-                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-white whitespace-nowrap drop-shadow-md">
+                        <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white whitespace-nowrap drop-shadow-md">
                             {nickname}
                         </div>
                          {/* WEAPON */}
-                        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-gray-300 whitespace-nowrap uppercase">
+                        <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[8px] text-gray-300 whitespace-nowrap uppercase">
                             {activeWeapon}
                         </div>
                     </div>

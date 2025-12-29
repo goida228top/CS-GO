@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { PlayerProfile, GameState } from './types';
 
@@ -23,6 +24,7 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
         scoreCT: 0,
         winner: null
     });
+    const [showAimbotFov, setShowAimbotFov] = useState(window.CHEATS?.aimbot || false);
     
     // Default avatar color if none
     const myColor = userProfile?.avatarColor || '#3b82f6';
@@ -44,14 +46,20 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
              if (e.detail) setScoreState(e.detail);
         };
 
+        const handleCheatUpdate = () => {
+            setShowAimbotFov(window.CHEATS.aimbot);
+        };
+
         window.addEventListener('HUD_UPDATE', handleUpdate);
         window.addEventListener('HUD_POS_UPDATE', handlePosUpdate);
         window.addEventListener('SCORE_UPDATE', handleScoreUpdate);
+        window.addEventListener('CHEAT_UPDATE', handleCheatUpdate);
         
         return () => {
             window.removeEventListener('HUD_UPDATE', handleUpdate);
             window.removeEventListener('HUD_POS_UPDATE', handlePosUpdate);
             window.removeEventListener('SCORE_UPDATE', handleScoreUpdate);
+            window.removeEventListener('CHEAT_UPDATE', handleCheatUpdate);
         };
     }, []);
 
@@ -67,6 +75,11 @@ export const HUD: React.FC<HUDProps> = ({ userProfile }) => {
     return (
         <div className="absolute inset-0 pointer-events-none z-20 font-sans select-none">
             
+            {/* AIMBOT FOV CIRCLE */}
+            {showAimbotFov && state.visible && (
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[150px] h-[150px] rounded-full border border-lime-500/30 bg-lime-500/5 shadow-[0_0_20px_rgba(132,204,22,0.1)]"></div>
+            )}
+
             {/* TOP SCOREBOARD */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 mt-2 flex items-start">
                 <div className="flex bg-black/70 backdrop-blur-md rounded-lg overflow-hidden shadow-lg border border-white/10">

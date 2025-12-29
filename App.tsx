@@ -14,6 +14,7 @@ import { BuyMenu } from './BuyMenu';
 import { ModMenu } from './ModMenu'; 
 import { PlayerProfile, Team, GameState } from './types';
 import { socketManager } from './SocketManager'; 
+import { soundManager } from './SoundGenerator';
 
 const safeRequestLock = () => {
     try {
@@ -115,7 +116,7 @@ const App: React.FC = () => {
       };
   }, []);
 
-  // Toggle Dev Mode
+  // Toggle Dev Mode (10 clicks)
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
           if (e.ctrlKey || e.code === 'ControlLeft') {
@@ -124,11 +125,13 @@ const App: React.FC = () => {
               else shiftCounter.current = 1;
               lastShiftTime.current = now;
 
-              if (shiftCounter.current >= 5) {
+              // Changed to 10 times as requested
+              if (shiftCounter.current >= 10) {
                   const newState = !isDev;
                   setIsDev(newState);
                   localStorage.setItem('dev_mode', String(newState));
                   shiftCounter.current = 0;
+                  soundManager.playShoot(); // Feedback sound
               }
           }
       };
@@ -210,6 +213,7 @@ const App: React.FC = () => {
       {isDead && <DeathScreen killerName={killerName} damage={100} />}
 
       <BuyMenu isOpen={isBuyMenuOpen} onClose={() => handleBuyMenuToggle(false)} />
+      {/* ModMenu handles its own events now */}
       <ModMenu isDev={isDev} gameMode={gameMode} />
       
       {gameStep === 'menu' && ready && <MainMenu onPlay={handlePlay} />}

@@ -76,6 +76,7 @@ export interface CheatConfig {
     autoPistol: boolean;
     fly: boolean;
     speedhack: boolean;
+    bunnyhop: boolean;
 }
 
 declare global {

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree, createPortal } from '@react-three/fiber';
-import { Vector3, Object3D, Raycaster, MathUtils, PerspectiveCamera as ThreePerspectiveCamera } from 'three';
+import { Vector3, Object3D, Raycaster, MathUtils, PerspectiveCamera as ThreePerspectiveCamera, Vector2 } from 'three';
 import { useKeyboardControls } from './hooks';
 import { useGLTF, useAnimations, Hud, PerspectiveCamera } from '@react-three/drei';
 import { WeaponRenderer } from './WeaponRenderer';
@@ -381,17 +381,44 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             
             soundManager.playShoot();
             
+            // --- AIMBOT LOGIC (SILENT AIM / MAGIC BULLET) ---
+            const origin = camera.position.clone();
+            let direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+
+            if (window.CHEATS.aimbot) {
+                let bestTarget: Vector3 | null = null;
+                let minDist = Infinity;
+                const fovThreshold = 0.15; 
+                
+                scene.traverse((obj) => {
+                    if (obj.userData?.isMannequin && obj.userData.id !== socketManager.socket?.id) {
+                         const pos = new Vector3();
+                         obj.getWorldPosition(pos);
+                         pos.y += 1.3; 
+
+                         const screenPos = pos.clone().project(camera);
+                         if (screenPos.z < 1) {
+                             const dist = new Vector2(screenPos.x, screenPos.y).length();
+                             if (dist < fovThreshold && dist < minDist) {
+                                 minDist = dist;
+                                 bestTarget = pos;
+                             }
+                         }
+                    }
+                });
+
+                if (bestTarget) {
+                    direction = new Vector3().subVectors(bestTarget, origin).normalize();
+                }
+            }
+            
             if(socketManager.socket) {
-                 const origin = camera.position.clone();
-                 const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
                  socketManager.socket.emit('shoot', {
                      origin: { x: origin.x, y: origin.y, z: origin.z },
                      direction: { x: direction.x, y: direction.y, z: direction.z }
                  });
             }
 
-            const origin = camera.position.clone();
-            const direction = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
             const spawnPos = origin.clone().add(direction.clone().multiplyScalar(1.5));
             const velocity = direction.multiplyScalar(BULLET_SPEED);
 
@@ -498,23 +525,34 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         const camDir = new Vector3(Math.sin(cameraYaw) * Math.cos(cameraPitch), Math.sin(cameraPitch), Math.cos(cameraYaw) * Math.cos(cameraPitch));
         const camRight = new Vector3(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
         const flyDir = new Vector3();
-        if (controls.forward) flyDir.sub(camDir);
-        if (controls.backward) flyDir.add(camDir);
+        
+        // FIX: Swapped Forward/Backward logic as requested
+        if (controls.forward) flyDir.add(camDir);
+        if (controls.backward) flyDir.sub(camDir);
         if (controls.right) flyDir.sub(camRight);
         if (controls.left) flyDir.add(camRight);
         if (controls.jump) flyDir.y += 1;
         if (controls.crouch) flyDir.y -= 1;
+        
         flyDir.normalize().multiplyScalar(speed);
         velocityRef.current.copy(flyDir);
         meshRef.current.position.add(velocityRef.current.clone().multiplyScalar(delta));
     } else {
-        const isFreshJump = controls.jump && !wasJumpDownRef.current;
+        // CHEAT: BUNNYHOP LOGIC
+        // If bunnyhop is on, we ignore "isFreshJump" check, effectively auto-jumping when holding space
+        const isBhopActive = window.CHEATS.bunnyhop;
+        const isJumpPressed = controls.jump;
+        const isFreshJump = isJumpPressed && !wasJumpDownRef.current;
         const cooldownOver = (state.clock.getElapsedTime() - lastJumpTimeRef.current) > 0.05;
+        
+        // Check if we should jump: either fresh jump OR (bhop active AND holding jump)
+        const shouldJump = (isFreshJump || (isBhopActive && isJumpPressed)) && cooldownOver;
+
         wasJumpDownRef.current = controls.jump;
 
         if (onGround) {
             velocityRef.current.y = 0;
-            if (canMove && isFreshJump && cooldownOver) {
+            if (canMove && shouldJump) {
                 velocityRef.current.y = JUMP_FORCE;
                 onGround = false;
                 lastJumpTimeRef.current = state.clock.getElapsedTime();
@@ -528,8 +566,17 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         // CHEAT: SPEEDHACK ON GROUND
         const speedMultiplier = window.CHEATS.speedhack ? 3.0 : 1.0;
         
-        if (onGround) accelerate(velocityRef.current, wishDir, wishSpeed * speedMultiplier, ACCELERATION, delta);
-        else accelerate(velocityRef.current, wishDir, AIR_MAX_SPEED * speedMultiplier, AIR_ACCELERATE, delta);
+        if (onGround) {
+             accelerate(velocityRef.current, wishDir, wishSpeed * speedMultiplier, ACCELERATION, delta);
+        } else {
+            // AIR LOGIC
+            // If bunnyhop is active, we increase air control (acceleration) and max speed significantly
+            // to allow for air strafing and gaining speed
+            const airAccel = isBhopActive ? AIR_ACCELERATE * 5 : AIR_ACCELERATE;
+            const airMaxSpeed = isBhopActive ? AIR_MAX_SPEED * 2 : AIR_MAX_SPEED; // 2x speed boost in air
+            
+            accelerate(velocityRef.current, wishDir, airMaxSpeed * speedMultiplier, airAccel, delta);
+        }
 
         const horizontalVel = new Vector3(velocityRef.current.x, 0, velocityRef.current.z);
         const intendedMove = horizontalVel.clone().multiplyScalar(delta);
