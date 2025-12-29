@@ -63,13 +63,16 @@ class SocketManager {
                  this.otherPlayers[data.id].position = data.pos;
                  this.otherPlayers[data.id].rotation = data.rot;
                  this.otherPlayers[data.id].weapon = data.weapon;
+                 // Sync animation states
+                 this.otherPlayers[data.id].animState = data.animState;
              } else {
                  // If we somehow missed this player, add stub
                  this.otherPlayers[data.id] = {
                      id: data.id,
                      position: data.pos,
                      rotation: data.rot,
-                     weapon: data.weapon
+                     weapon: data.weapon,
+                     animState: data.animState || { isCrouching: false, isMoving: false }
                  };
              }
         });
@@ -90,7 +93,8 @@ class SocketManager {
                     // Ensure position exists if server sends it
                     position: p.position || { x: 0, y: 0, z: 0 },
                     rotation: p.rotation || { y: 0 },
-                    weapon: p.weapon || 'pistol'
+                    weapon: p.weapon || 'pistol',
+                    animState: p.animState || { isCrouching: false, isMoving: false }
                 };
             }
         });
@@ -126,12 +130,18 @@ class SocketManager {
     }
 
     // Отправка позиции (вызываем в useFrame)
-    updatePosition(pos: {x: number, y: number, z: number}, rot: number, weapon: string) {
+    updatePosition(
+        pos: {x: number, y: number, z: number}, 
+        rot: number, 
+        weapon: string,
+        animState: { isCrouching: boolean, isMoving: boolean }
+    ) {
         if (!this.socket) return;
         this.socket.emit('update', {
             pos,
             rot: { y: rot },
-            weapon
+            weapon,
+            animState
         });
     }
 }

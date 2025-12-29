@@ -239,6 +239,8 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
               if (socketManager.otherPlayers[data.id]) {
                   socketManager.otherPlayers[data.id].position = data.pos;
                   socketManager.otherPlayers[data.id].rotation = data.rot;
+                  socketManager.otherPlayers[data.id].animState = data.animState; // Sync Anim State
+                  socketManager.otherPlayers[data.id].weapon = data.weapon;
                   // Don't re-render entire component on every frame move for perf,
                   // NetworkPlayer handles its own Lerp via refs, but we need
                   // to trigger if a NEW player appeared, which player_joined handles.
@@ -285,6 +287,7 @@ export const World: React.FC<WorldProps> = ({ gameMode, isDev = false }) => {
             nickname={p.nickname}
             team={p.team}
             weapon={p.weapon}
+            animState={p.animState}
           />
       ))}
 

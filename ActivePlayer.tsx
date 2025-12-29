@@ -234,12 +234,14 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             detail: { x: p.x, y: p.y, z: p.z } 
         }));
 
-        // Network Update (Send 20 times per second)
-        if (socketManager.socket && now - lastNetworkUpdate.current > 50) {
+        // Network Update (Send 30 times per second = ~33ms)
+        if (socketManager.socket && now - lastNetworkUpdate.current > 30) {
+             const isMoving = controls.forward || controls.backward || controls.left || controls.right;
              socketManager.updatePosition(
                  { x: p.x, y: p.y, z: p.z }, 
                  bodyYawRef.current,
-                 currentWeaponId
+                 currentWeaponId,
+                 { isCrouching: controls.crouch, isMoving: isMoving }
              );
              lastNetworkUpdate.current = now;
         }
