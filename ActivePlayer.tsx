@@ -98,7 +98,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   const [deathForce, setDeathForce] = useState(new Vector3(0,0,0));
   const [canMove, setCanMove] = useState(true);
   
-  // Store team to know where to spawn
   const [myTeam, setMyTeam] = useState<Team | undefined>(undefined);
 
   // --- WEAPON STATE ---
@@ -138,53 +137,32 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   const horizontalRaycaster = useMemo(() => new Raycaster(), []); 
   const [muzzleFlashVisible, setMuzzleFlashVisible] = useState(false);
 
-  // --- HELPER: GET SPAWN POINT ---
   const getSpawnPoint = () => {
       let points = SPAWN_POINTS.DM;
-      // Get Team from local state or userProfile via some prop if needed.
-      // Better to check socketManager.otherPlayers[myId].team OR infer from some context.
-      // But we can just use the internal 'myTeam' state which we update below.
-      
       if (myTeam === 'T' && SPAWN_POINTS.T.length > 0) points = SPAWN_POINTS.T;
       else if (myTeam === 'CT' && SPAWN_POINTS.CT.length > 0) points = SPAWN_POINTS.CT;
       
       const randIdx = Math.floor(Math.random() * points.length);
       const base = points[randIdx].clone();
-      
-      // Jitter to prevent stacking
       base.x += (Math.random() - 0.5) * 2;
       base.z += (Math.random() - 0.5) * 2;
       return base;
   };
 
-  // --- SOCKET LISTENERS ---
   useEffect(() => {
-    // 1. Identify my team on mount/connection
-    const checkTeam = () => {
-        if (socketManager.socket) {
-            // Find myself in the room data if possible
-            const me = socketManager.otherPlayers[socketManager.socket.id]; // This usually only holds *others*
-            // However, we can try to get it from the UI props passed down or listen to room update
-        }
-    };
-
-    // Listen to room updates to know my team
     socketManager.onRoomJoined = (room) => {
         if (socketManager.socket && room.players[socketManager.socket.id]) {
             setMyTeam(room.players[socketManager.socket.id].team);
         }
     };
 
-    // 2. HIT REGISTRATION LOGIC
     const handleMannequinHit = (e: any) => {
         if (!e.detail || !socketManager.socket) return;
         const { id, force, partName } = e.detail;
 
-        // Skip if hitting myself (unlikely due to filtering, but safe to check)
         if (id === socketManager.socket.id) return;
         
         if (typeof id === 'string' && socketManager.otherPlayers[id]) {
-             // CALCULATE DAMAGE
              let multiplier = DMG_mult.BODY;
              if (partName) {
                  const p = partName.toLowerCase();
@@ -192,7 +170,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
                  else if (p.includes('arm') || p.includes('leg') || p.includes('hand') || p.includes('foot')) multiplier = DMG_mult.LIMB;
              }
              
-             // Random variance: -2 to +3
              const variance = (Math.random() * 5) - 2; 
              const finalDamage = Math.floor((currentWeapon.damage + variance) * multiplier);
 
@@ -205,19 +182,20 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     };
 
     const handleLocalDamage = (e: any) => {
+        // CHEAT: GOD MODE
+        if (window.CHEATS.godMode) return;
+
         const newHealth = e.detail;
         setHealth(newHealth);
         if (newHealth <= 0 && !isDead) {
             setIsDead(true);
             setIsThirdPerson(true);
-            setDeathForce(new Vector3(0, 1, 0)); // Generic upward force
+            setDeathForce(new Vector3(0, 1, 0)); 
         }
     };
 
     const handleGameState = (e: any) => {
         const state: GameState = e.detail;
-        // Freeze only during 'freeze' (preparation). 
-        // Allow movement during 'end' (post-round fun).
         if (state.status === 'freeze') {
             setCanMove(false);
         } else {
@@ -225,7 +203,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         }
     };
     
-    // Server tells us to respawn
     const handleRespawnAll = () => {
         setHealth(100);
         setIsDead(false);
@@ -233,13 +210,11 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         setIsThirdPerson(false);
         setAmmo(currentWeapon.maxAmmo);
         
-        // Reset Position to Team Spawn
         const spawn = getSpawnPoint();
         
         if(meshRef.current) {
              meshRef.current.position.set(spawn.x, spawn.y, spawn.z);
              velocityRef.current.set(0,0,0);
-             // Reset look? Maybe
         }
         if (rbRef.current) {
              rbRef.current.setNextKinematicTranslation({ x: spawn.x, y: spawn.y + 0.9, z: spawn.z });
@@ -258,9 +233,8 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         window.removeEventListener('LOCAL_DAMAGE', handleLocalDamage);
         window.removeEventListener('SCORE_UPDATE', handleGameState);
     };
-  }, [currentWeapon.damage, isDead, myTeam]); // Re-bind if weapon or team changes
+  }, [currentWeapon.damage, isDead, myTeam]);
 
-  // Weapon Buy
   const performBuy = (weaponId: 'pistol' | 'ak47') => {
       setShootTrigger(0); setReloadTrigger(0); setInspectTrigger(0);
       setCurrentWeaponId(weaponId);
@@ -277,6 +251,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   }, []);
 
   const startReload = () => {
+      // CHEAT: INFINITE AMMO -> No reload needed unless forced manually
+      if (window.CHEATS.infiniteAmmo && ammo > 0 && !controls.reload) return; 
+
       if (isReloading || ammo === currentWeapon.maxAmmo) return;
       setIsReloading(true);
       setReloadTrigger(c => c + 1);
@@ -292,14 +269,12 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     return () => { if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current); };
   }, [currentWeaponId]); 
 
-  // HUD Update
   useEffect(() => {
       window.dispatchEvent(new CustomEvent('HUD_UPDATE', { 
           detail: { visible: isEquipped && !isThirdPerson && !isDead, ammo, isReloading, health } 
       }));
   }, [ammo, isReloading, isEquipped, isThirdPerson, health, isDead]);
 
-  // Buy Menu Key
   useEffect(() => {
       if (controls.buy && !lastBuyState.current) {
           const newState = !isBuyMenuOpen;
@@ -312,6 +287,17 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   useEffect(() => {
       if (isLocked && isBuyMenuOpen) setIsBuyMenuOpen(false);
   }, [isLocked]);
+
+  // CHEAT: FLY TOGGLE
+  useEffect(() => {
+      if (controls.toggleFly && !lastFlyState.current) {
+          if (window.CHEATS.fly || localStorage.getItem('dev_mode') === 'true') {
+              setIsFlying(v => !v);
+              velocityRef.current.set(0,0,0);
+          }
+      }
+      lastFlyState.current = controls.toggleFly;
+  }, [controls.toggleFly]);
 
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
@@ -335,8 +321,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         }
         
         if (p.y < -20) {
-            // Fall off map -> respawn logic logic
-            // For now just teleport to 0,0,0 or team spawn
             const spawn = getSpawnPoint();
             meshRef.current.position.set(spawn.x, spawn.y, spawn.z);
             velocityRef.current.set(0, 0, 0);
@@ -347,7 +331,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         const map = scene.getObjectByName('environment');
         if (map) mapObjectRef.current = map;
         else {
-            // Initial positioning
             const spawn = getSpawnPoint();
             if (meshRef.current) {
                 meshRef.current.position.set(spawn.x, spawn.y, spawn.z);
@@ -358,7 +341,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         }
     }
 
-    // --- DEAD / FROZEN STATE ---
     if (isDead || !canMove) {
         if (isDead && isThirdPerson) {
              const pivot = meshRef.current ? meshRef.current.position : DEFAULT_SPAWN;
@@ -373,10 +355,14 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         return; 
     }
 
-    // --- CONTROLS ---
+    // --- SHOOTING LOGIC WITH CHEATS ---
     const canShoot = isEquipped && isLocked && !isReloading && !isBuyMenuOpen && canMove && !isDead;
-    const isAuto = currentWeapon.auto;
-    const fireRate = currentWeapon.rate;
+    
+    // CHEAT: AUTO PISTOL
+    const isAuto = currentWeapon.auto || window.CHEATS.autoPistol;
+    
+    // CHEAT: RAPID FIRE (Tiny delay)
+    const fireRate = window.CHEATS.rapidFire ? 0.05 : currentWeapon.rate;
     
     const triggerPull = isAuto ? controls.shoot : (controls.shoot && !lastShootState.current);
     const cooldownOver = (time - lastShotTimeRef.current) >= fireRate;
@@ -387,7 +373,12 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             setMuzzleFlashVisible(true);
             setTimeout(() => setMuzzleFlashVisible(false), 50);
             setShootTrigger(c => c + 1);
-            setAmmo(a => a - 1);
+            
+            // CHEAT: INFINITE AMMO
+            if (!window.CHEATS.infiniteAmmo) {
+                setAmmo(a => a - 1);
+            }
+            
             soundManager.playShoot();
             
             if(socketManager.socket) {
@@ -442,14 +433,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isLocked) return;
-      
-      // ADS SENSITIVITY REDUCTION
-      // Check window.controls if possible, but hooks are local. 
-      // We will rely on a Ref updated by render loop or just simple logic inside the event if we can access the state.
-      // Since event listener is created once, we need a ref to track aim state or update listener.
-      // Easiest is to check a ref.
-      
-      const isAiming = controlsRef.current?.aim; // We need to expose controls to this closure
+      const isAiming = controlsRef.current?.aim;
       const baseSens = 0.002;
       const sensitivity = isAiming ? baseSens * 0.25 : baseSens; 
 
@@ -457,15 +441,12 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       rotationRef.current.pitch -= e.movementY * sensitivity;
       rotationRef.current.pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, rotationRef.current.pitch));
     };
-    
     document.addEventListener('mousemove', handleMouseMove);
     return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [isLocked]); // Re-bind if lock changes, but better to use ref for 'aim'
+  }, [isLocked]); 
 
-  // Hack to access controls inside event listener
   const controlsRef = useRef(controls);
   useEffect(() => { controlsRef.current = controls; }, [controls]);
-
 
   useFrame((state, delta) => {
     if (!meshRef.current || !mapObjectRef.current) return;
@@ -478,9 +459,8 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     
     const pCam = camera as ThreePerspectiveCamera;
     
-    // --- ADS (AIM) FOV LOGIC ---
     let targetFov = 50;
-    if (controls.aim && isEquipped && !isThirdPerson) targetFov = 30; // Zoom in
+    if (controls.aim && isEquipped && !isThirdPerson) targetFov = 30;
     else if (controls.boost && isFlying) targetFov = 80;
 
     pCam.fov = MathUtils.lerp(pCam.fov, targetFov, delta * 15);
@@ -512,7 +492,9 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     if (!isFlying && wishDir.dot(forward.clone().negate()) < 0.5) wishSpeed /= 1.7;
 
     if (isFlying) {
-        const speed = controls.boost ? SUPER_SPEED : FLY_SPEED;
+        // CHEAT: SPEEDHACK
+        const speed = window.CHEATS.speedhack ? SUPER_SPEED * 2 : (controls.boost ? SUPER_SPEED : FLY_SPEED);
+        
         const camDir = new Vector3(Math.sin(cameraYaw) * Math.cos(cameraPitch), Math.sin(cameraPitch), Math.cos(cameraYaw) * Math.cos(cameraPitch));
         const camRight = new Vector3(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
         const flyDir = new Vector3();
@@ -543,8 +525,11 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             velocityRef.current.y -= GRAVITY * delta;
         }
         
-        if (onGround) accelerate(velocityRef.current, wishDir, wishSpeed, ACCELERATION, delta);
-        else accelerate(velocityRef.current, wishDir, AIR_MAX_SPEED, AIR_ACCELERATE, delta);
+        // CHEAT: SPEEDHACK ON GROUND
+        const speedMultiplier = window.CHEATS.speedhack ? 3.0 : 1.0;
+        
+        if (onGround) accelerate(velocityRef.current, wishDir, wishSpeed * speedMultiplier, ACCELERATION, delta);
+        else accelerate(velocityRef.current, wishDir, AIR_MAX_SPEED * speedMultiplier, AIR_ACCELERATE, delta);
 
         const horizontalVel = new Vector3(velocityRef.current.x, 0, velocityRef.current.z);
         const intendedMove = horizontalVel.clone().multiplyScalar(delta);
@@ -631,7 +616,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             const swayX = Math.cos(time * 10) * 0.005 * (onGround ? speed : 0);
             const swayY = Math.abs(Math.sin(time * 10)) * 0.005 * (onGround ? speed : 0);
             
-            // Apply aim position shift if needed (simple sway reduction for now)
             const aimFactor = controls.aim ? 0.5 : 1;
 
             fpsWeaponRef.current.position.set(weaponPos.x + swayX, weaponPos.y - swayY * aimFactor, -weaponPos.z);
@@ -642,15 +626,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
         }
     }
   });
-
-  if (isDead) {
-      return (
-          <>
-            <Ragdoll id="local-ragdoll" position={meshRef.current ? meshRef.current.position : DEFAULT_SPAWN} initialVelocity={deathForce} />
-            <group ref={meshRef} position={meshRef.current ? meshRef.current.position : DEFAULT_SPAWN} visible={false}></group>
-          </>
-      );
-  }
 
   if (!modelScene) return null;
 

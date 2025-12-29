@@ -66,6 +66,18 @@ export interface GameRoom {
     gameState?: GameState;
 }
 
+export interface CheatConfig {
+    esp: boolean;
+    chams: boolean;
+    aimbot: boolean;
+    godMode: boolean;
+    infiniteAmmo: boolean;
+    rapidFire: boolean;
+    autoPistol: boolean;
+    fly: boolean;
+    speedhack: boolean;
+}
+
 declare global {
   interface Window {
     GAME_SETTINGS: {
@@ -74,6 +86,7 @@ declare global {
       showHitboxes: boolean;
       fpsWeaponPosition: { x: number, y: number, z: number };
     };
+    CHEATS: CheatConfig;
   }
   
   // JSX augmentation

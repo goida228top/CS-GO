@@ -1,6 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { useGLTF, useAnimations } from '@react-three/drei';
-import { Vector3, Object3D, MathUtils } from 'three';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { useGLTF, useAnimations, Html } from '@react-three/drei';
+import { Vector3, Object3D, MathUtils, MeshBasicMaterial } from 'three';
 import { PLAYER_MODEL_URL, BODY_HALF_SIZE, HEAD_HALF_SIZE, LIMB_HALF_SIZE } from './constants';
 import { SkeletonUtils } from 'three-stdlib';
 import { useFrame, createPortal } from '@react-three/fiber';
@@ -59,8 +59,55 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
     const [shootTrigger, setShootTrigger] = useState(0);
     const [isDead, setIsDead] = useState(false);
     const [deathForce, setDeathForce] = useState(new Vector3(0,0,0));
+    
+    // Visual Cheats State
+    const [showEsp, setShowEsp] = useState(window.CHEATS?.esp || false);
+    const [showChams, setShowChams] = useState(window.CHEATS?.chams || false);
 
     const lastShootTriggerRef = useRef(0);
+
+    // Subscribe to cheats update
+    useEffect(() => {
+        const updateCheats = () => {
+            setShowEsp(window.CHEATS.esp);
+            setShowChams(window.CHEATS.chams);
+        };
+        window.addEventListener('CHEAT_UPDATE', updateCheats);
+        return () => window.removeEventListener('CHEAT_UPDATE', updateCheats);
+    }, []);
+
+    // Apply Chams (Glow Effect)
+    useEffect(() => {
+        if (!modelRef.current) return;
+        
+        if (showChams) {
+            // Apply chams material (Magenta/Pink, ignore depth)
+            const chamsMat = new MeshBasicMaterial({ 
+                color: '#ff00ff', 
+                depthTest: false, 
+                depthWrite: false, 
+                transparent: true, 
+                opacity: 0.5 
+            });
+            
+            clone.traverse((obj: any) => {
+                if (obj.isMesh) {
+                    obj.userData.originalMat = obj.material;
+                    obj.material = chamsMat;
+                    obj.renderOrder = 999;
+                }
+            });
+        } else {
+            // Restore original material
+             clone.traverse((obj: any) => {
+                if (obj.isMesh && obj.userData.originalMat) {
+                    obj.material = obj.userData.originalMat;
+                    obj.renderOrder = 0;
+                }
+            });
+        }
+    }, [showChams, clone]);
+
 
     // --- DIRECT UPDATE LOOP ---
     useFrame((state, delta) => {
@@ -90,9 +137,9 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
             }
         }
 
-        if (isDead) return; // Don't animate alive model if dead
+        if (isDead) return;
 
-        // 2. SMOOTH INTERPOLATION (Reduced speed for smoother look, 20 -> 12)
+        // 2. SMOOTH INTERPOLATION
         if (groupRef.current) {
             groupRef.current.position.lerp(targetPos.current, delta * 12); 
             
@@ -149,7 +196,6 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
         );
     }
 
-    // Hitbox offsets for valid shooting
     const legHeight = LIMB_HALF_SIZE.y * 2;
     const bodyHeight = BODY_HALF_SIZE.y * 2;
     
@@ -157,12 +203,14 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
     const headPos: [number, number, number] = [0, legHeight + bodyHeight + HEAD_HALF_SIZE.y, 0];
     const legLeftPos: [number, number, number] = [-BODY_HALF_SIZE.x / 2, LIMB_HALF_SIZE.y, 0];
     const legRightPos: [number, number, number] = [BODY_HALF_SIZE.x / 2, LIMB_HALF_SIZE.y, 0];
+    
+    // ESP Style Config
+    const boxColor = team === 'T' ? '#ffaa00' : '#00aaff'; 
 
     return (
         <group ref={groupRef} position={[position.x, position.y, position.z]}>
             
-            {/* INVISIBLE HITBOXES FOR RAYCASTING */}
-            {/* Added 'name' prop to Hitbox so raycaster knows what was hit */}
+            {/* INVISIBLE HITBOXES */}
             <group userData={{ isMannequin: true, id: id }}>
                  <Hitbox name="body" position={bodyPos} args={BODY_HALF_SIZE} />
                  <Hitbox name="head" position={headPos} args={HEAD_HALF_SIZE} />
@@ -170,12 +218,40 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
                  <Hitbox name="legRight" position={legRightPos} args={LIMB_HALF_SIZE} />
             </group>
 
-            {/* Nickname Tag */}
-            <mesh position={[0, 2.3, 0]}>
-                <planeGeometry args={[1, 0.25]} />
-                <meshBasicMaterial color="black" transparent opacity={0.5} />
-            </mesh>
-             {/* Text for nickname would be nice but texture is easier for now */}
+            {/* ESP OVERLAY */}
+            {showEsp && (
+                <Html position={[0, 1, 0]} center occlude={false} distanceFactor={15} zIndexRange={[100, 0]}>
+                    <div className="relative w-32 h-64 pointer-events-none select-none">
+                        {/* 2D BOX */}
+                        <div 
+                            className="absolute inset-0 border-2"
+                            style={{ 
+                                borderColor: boxColor,
+                                boxShadow: `0 0 10px ${boxColor}, inset 0 0 10px ${boxColor}20`
+                            }}
+                        ></div>
+                        
+                        {/* HEALTH BAR */}
+                        <div className="absolute -left-3 top-0 bottom-0 w-1 bg-gray-800">
+                             {/* For now we assume 100 HP since we don't sync HP of others perfectly yet, 
+                                 or we can update it if socket sends it. 
+                                 SocketManager sends 'player_damaged' events, but we store it in local state there?
+                                 We can access socketManager.otherPlayers[id].health if we updated the server to sync it.
+                             */}
+                             <div className="absolute bottom-0 left-0 w-full bg-green-500" style={{ height: '100%' }}></div>
+                        </div>
+
+                        {/* NAME */}
+                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-white whitespace-nowrap drop-shadow-md">
+                            {nickname}
+                        </div>
+                         {/* WEAPON */}
+                        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-gray-300 whitespace-nowrap uppercase">
+                            {activeWeapon}
+                        </div>
+                    </div>
+                </Html>
+            )}
 
             {/* Visual Model Container */}
             <group ref={modelRef}>
@@ -193,12 +269,6 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
                     rightHandBone
                 )}
             </group>
-            
-            {/* Team/Color Indicator */}
-            <mesh position={[0, 2.5, 0]}>
-                 <sphereGeometry args={[0.1]} />
-                 <meshBasicMaterial color={color} />
-            </mesh>
         </group>
     );
 };

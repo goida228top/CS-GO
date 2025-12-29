@@ -5,129 +5,163 @@ interface ModMenuProps {
     gameMode: string;
 }
 
+type TabName = 'COMBAT' | 'VISUALS' | 'PLAYER' | 'WORLD';
+
 export const ModMenu: React.FC<ModMenuProps> = ({ isDev, gameMode }) => {
     const [visible, setVisible] = useState(false);
-    const [force, setForce] = useState(0.1);
-    
-    // Cheats State
-    const [wallhack, setWallhack] = useState(false);
-    const [aimbot, setAimbot] = useState(false);
-    
+    const [activeTab, setActiveTab] = useState<TabName>('VISUALS');
+    const [, forceUpdate] = useState({});
+
+    // Toggle Menu
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore key repeats to prevent flickering
             if (e.repeat) return;
-
-            // Training mode -> 'M' key
-            if (gameMode === 'training' && e.code === 'KeyM') {
-                setVisible(v => !v);
-                return;
-            }
-
-            // Dev Mode -> Control Key (Changed from Shift)
-            if (isDev && (e.code === 'ControlLeft' || e.key === 'Control')) {
-                setVisible(v => !v);
+            // Right Control or just Control to open
+            if (e.code === 'ControlRight' || e.code === 'ControlLeft') {
+                setVisible(v => {
+                    const newState = !v;
+                    if (newState) {
+                        document.exitPointerLock();
+                    }
+                    return newState;
+                });
             }
         };
-        
-        // Use document instead of window for better capture in iframes/canvas
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [isDev, gameMode]);
+    }, []);
 
-    // Apply Cheats
-    useEffect(() => {
-        if (typeof window !== 'undefined' && window.GAME_SETTINGS) {
-            window.GAME_SETTINGS.showHitboxes = wallhack;
-            window.dispatchEvent(new Event('SETTINGS_CHANGED'));
-        }
-    }, [wallhack]);
-
-    const updateForce = (val: number) => {
-        setForce(val);
-        if (window.GAME_SETTINGS) window.GAME_SETTINGS.gunForce = val;
+    const toggleCheat = (key: keyof typeof window.CHEATS) => {
+        window.CHEATS[key] = !window.CHEATS[key];
+        // Trigger event for components that listen directly (like ESP)
+        window.dispatchEvent(new Event('CHEAT_UPDATE'));
+        forceUpdate({});
     };
 
-    const respawn = () => {
+    const updateForce = (val: number) => {
+        if (window.GAME_SETTINGS) window.GAME_SETTINGS.gunForce = val;
+        forceUpdate({});
+    };
+
+    const respawnMannequins = () => {
         window.dispatchEvent(new Event('RESPAWN_ALL'));
     };
 
     if (!visible) return null;
 
-    // Standard HTML Overlay (No <Html> from drei)
+    const renderToggle = (label: string, cheatKey: keyof typeof window.CHEATS, desc: string) => (
+        <div 
+            onClick={() => toggleCheat(cheatKey)}
+            className={`
+                flex items-center justify-between p-4 mb-2 rounded border-l-4 cursor-pointer transition-all select-none
+                ${window.CHEATS[cheatKey] 
+                    ? 'bg-gray-800 border-lime-500 shadow-[0_0_15px_rgba(132,204,22,0.2)]' 
+                    : 'bg-gray-900 border-gray-700 hover:bg-gray-800'}
+            `}
+        >
+            <div className="flex flex-col">
+                <span className={`font-bold text-lg ${window.CHEATS[cheatKey] ? 'text-white' : 'text-gray-400'}`}>
+                    {label}
+                </span>
+                <span className="text-[10px] text-gray-500 font-mono uppercase">{desc}</span>
+            </div>
+            <div className={`w-4 h-4 rounded-sm ${window.CHEATS[cheatKey] ? 'bg-lime-500 shadow-[0_0_10px_lime]' : 'bg-gray-700'}`} />
+        </div>
+    );
+
     return (
-        <div className="absolute top-1/2 left-20 -translate-y-1/2 w-80 bg-black/95 text-white p-6 rounded-xl border-2 border-red-600 font-mono text-sm shadow-[0_0_50px_rgba(220,38,38,0.5)] z-50 pointer-events-auto">
-            
-            <div className="flex justify-between items-center mb-6 border-b border-red-800 pb-2">
-                <h2 className="text-2xl font-black text-red-500 italic tracking-widest">
-                    {isDev ? "HACK_MENU_V3" : "TRAINING_MENU"}
-                </h2>
-                <span className="text-xs text-gray-500">{isDev ? "DEV_ACCESS" : "USER"}</span>
-            </div>
-            
-            {/* CHEATS SECTION */}
-            <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                    <span className="font-bold text-lg">WALLHACK (ESP)</span>
-                    <div 
-                        onClick={() => setWallhack(!wallhack)}
-                        className={`w-12 h-6 rounded-full relative cursor-pointer ${wallhack ? 'bg-red-500' : 'bg-gray-700'}`}
-                    >
-                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wallhack ? 'left-7' : 'left-1'}`} />
+        <div className="absolute inset-0 z-[999] bg-black/60 backdrop-blur-sm flex items-center justify-center font-sans">
+            <div className="w-[800px] h-[600px] flex bg-[#111] rounded-xl overflow-hidden border border-gray-700 shadow-2xl">
+                
+                {/* SIDEBAR */}
+                <div className="w-64 bg-[#0a0a0a] border-r border-gray-800 flex flex-col">
+                    <div className="p-8 border-b border-gray-800">
+                        <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-cyan-400 italic">
+                            HYPER<span className="text-white">CLIENT</span>
+                        </h1>
+                        <p className="text-xs text-gray-500 mt-1 font-mono">b1.0.0 | dev_build</p>
+                    </div>
+                    
+                    <div className="flex-1 py-4">
+                        {(['COMBAT', 'VISUALS', 'PLAYER', 'WORLD'] as TabName[]).map(tab => (
+                            <div 
+                                key={tab}
+                                onClick={() => setActiveTab(tab)}
+                                className={`
+                                    px-8 py-4 cursor-pointer font-bold text-sm tracking-widest transition-all
+                                    ${activeTab === tab 
+                                        ? 'text-white bg-gradient-to-r from-white/10 to-transparent border-l-4 border-lime-500' 
+                                        : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border-l-4 border-transparent'}
+                                `}
+                            >
+                                {tab}
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="p-4 text-center text-[10px] text-gray-700 font-mono">
+                        PRESS [CTRL] TO CLOSE
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                        <div className="flex flex-col">
-                        <span className="font-bold text-lg">AIMBOT</span>
-                        <span className="text-[10px] text-gray-500">AUTO-LOCK ON HEAD</span>
-                        </div>
-                    <div 
-                        onClick={() => setAimbot(!aimbot)}
-                        className={`w-12 h-6 rounded-full relative cursor-pointer ${aimbot ? 'bg-red-500' : 'bg-gray-700'}`}
-                    >
-                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${aimbot ? 'left-7' : 'left-1'}`} />
-                    </div>
-                </div>
+                {/* CONTENT */}
+                <div className="flex-1 p-8 overflow-y-auto bg-[url('https://raw.githubusercontent.com/goida228top/textures/main/grid_bg.png')] bg-cover">
+                    <h2 className="text-4xl font-black text-white mb-8 border-b border-white/10 pb-4">{activeTab}</h2>
 
-                <div className="flex items-center justify-between p-3 bg-gray-900 rounded border border-gray-800 hover:border-red-500 transition-colors">
-                        <div className="flex flex-col">
-                        <span className="font-bold text-lg">FLY MODE</span>
-                        <span className="text-[10px] text-gray-500">PRESS 'V' TO TOGGLE</span>
+                    {activeTab === 'COMBAT' && (
+                        <div className="grid grid-cols-1 gap-2">
+                            {renderToggle('KILL AURA', 'aimbot', 'Auto-locks on nearest enemy head')}
+                            {renderToggle('RAPID FIRE', 'rapidFire', 'Removes weapon fire rate limit')}
+                            {renderToggle('AUTO PISTOL', 'autoPistol', 'Makes pistols fully automatic')}
                         </div>
-                        <div className={`text-xs font-bold ${isDev || gameMode === 'training' ? 'text-green-500' : 'text-red-500'}`}>
-                            {isDev || gameMode === 'training' ? "UNLOCKED" : "LOCKED"}
+                    )}
+
+                    {activeTab === 'VISUALS' && (
+                        <div className="grid grid-cols-1 gap-2">
+                            {renderToggle('ESP BOX', 'esp', 'Draws 2D boxes around players')}
+                            {renderToggle('CHAMS', 'chams', 'See players through walls (Pink Glow)')}
                         </div>
-                </div>
-            </div>
+                    )}
 
-            {/* SLIDERS */}
-            <div className="mt-6 pt-4 border-t border-gray-800">
-                <div className="mb-3">
-                    <label className="block mb-1 text-gray-400 font-bold uppercase">Physics Punch Force</label>
-                    <input 
-                        type="range" 
-                        min="0" 
-                        max="5" 
-                        step="0.1"
-                        value={force} 
-                        onChange={(e) => updateForce(Number(e.target.value))}
-                        className="w-full accent-red-500"
-                    />
-                    <div className="text-right text-xs text-red-400">{force.toFixed(1)}x</div>
-                </div>
-            </div>
+                    {activeTab === 'PLAYER' && (
+                        <div className="grid grid-cols-1 gap-2">
+                            {renderToggle('GOD MODE', 'godMode', 'Invulnerability to damage')}
+                            {renderToggle('FLIGHT', 'fly', 'Fly like a bird (Press V)')}
+                            {renderToggle('NO RELOAD', 'infiniteAmmo', 'Infinite clip size')}
+                            {renderToggle('SPEED', 'speedhack', 'Increases movement speed')}
+                        </div>
+                    )}
 
-            <button 
-                onClick={respawn}
-                className="w-full mt-4 py-3 bg-red-900/20 hover:bg-red-600 text-red-500 hover:text-white font-black uppercase tracking-widest rounded border border-red-900 transition-all hover:shadow-[0_0_15px_red]"
-            >
-                RESET MAP OBJECTS
-            </button>
-            
-            <div className="mt-4 text-[10px] text-center text-gray-600 font-mono">
-                build_version: 0.9.1-alpha <br/>
-                uid: {isDev ? "admin_root" : "guest"}
+                    {activeTab === 'WORLD' && (
+                        <div className="space-y-6">
+                            {gameMode === 'training' ? (
+                                <>
+                                    <div className="bg-gray-900 p-4 rounded border border-gray-800">
+                                        <label className="block text-gray-400 font-bold mb-2 text-sm uppercase">Bullet Force Power</label>
+                                        <input 
+                                            type="range" min="0" max="5" step="0.1" 
+                                            defaultValue={window.GAME_SETTINGS?.gunForce || 0.1}
+                                            onChange={(e) => updateForce(parseFloat(e.target.value))}
+                                            className="w-full accent-lime-500"
+                                        />
+                                        <div className="text-right text-lime-500 font-mono mt-1">{(window.GAME_SETTINGS?.gunForce || 0.1).toFixed(1)}x</div>
+                                    </div>
+                                    
+                                    <button 
+                                        onClick={respawnMannequins}
+                                        className="w-full py-4 bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white font-bold rounded border border-red-500/50 uppercase tracking-widest transition-all"
+                                    >
+                                        Respawn Mannequins
+                                    </button>
+                                </>
+                            ) : (
+                                <div className="p-6 bg-red-900/20 border border-red-500/30 rounded text-center text-red-400 font-bold">
+                                    WORLD SETTINGS LOCKED IN ONLINE MODE
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

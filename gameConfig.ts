@@ -5,7 +5,19 @@ if (typeof window !== 'undefined') {
     gunForce: 0.1,
     dragMode: false,
     showHitboxes: false,
-    fpsWeaponPosition: { x: 0.40, y: -0.25, z: 1.10 } // Обновлено по скриншоту
+    fpsWeaponPosition: { x: 0.40, y: -0.25, z: 1.10 }
+  };
+
+  window.CHEATS = {
+      esp: false,
+      chams: false,
+      aimbot: false,
+      godMode: false,
+      infiniteAmmo: false,
+      rapidFire: false,
+      autoPistol: false,
+      fly: false,
+      speedhack: false
   };
 }
 
