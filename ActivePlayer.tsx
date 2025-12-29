@@ -35,7 +35,6 @@ const normalizeAngle = (angle: number) => {
   return a;
 };
 
-// Physics functions omitted for brevity, logic remains same
 const applyFriction = (vel: Vector3, t: number, onGround: boolean) => {
     if (!onGround) return vel;
     const speed = vel.length();
@@ -62,15 +61,12 @@ const accelerate = (vel: Vector3, wishDir: Vector3, wishSpeed: number, accel: nu
     return vel;
 };
 
-// SPAWN POINT CONSTANT
 const SPAWN_POS: [number, number, number] = [-0.77, 2.89, 10.13];
 
 export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean, onBuyMenuToggle: (v: boolean) => void }) => {
   const meshRef = useRef<Object3D>(null);
   const modelContainerRef = useRef<Object3D>(null);
   const fpsWeaponRef = useRef<Object3D>(null); 
-  
-  // Physics Body for Interaction
   const rbRef = useRef<RapierRigidBody>(null);
 
   const { camera, scene } = useThree();
@@ -91,22 +87,16 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   
   const velocityRef = useRef(new Vector3(0, 0, 0));
   
-  // --- PLAYER STATE ---
   const [health, setHealth] = useState(100);
 
-  // --- WEAPON STATE ---
   const [currentWeaponId, setCurrentWeaponId] = useState<'pistol' | 'ak47'>('pistol');
   const [isEquipped, setIsEquipped] = useState(false); 
   const [ammo, setAmmo] = useState(WEAPONS_DATA['pistol'].maxAmmo);
   const [isReloading, setIsReloading] = useState(false);
-  
-  // Buy Menu State (internal tracker for key press)
   const [isBuyMenuOpen, setIsBuyMenuOpen] = useState(false);
   const lastBuyState = useRef(false);
 
-  // Derived weapon data
   const currentWeapon = WEAPONS_DATA[currentWeaponId];
-
   const [isThirdPerson, setIsThirdPerson] = useState(false);
   const [isFlying, setIsFlying] = useState(false);
   
@@ -118,30 +108,43 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   const lastReloadState = useRef(false);
   const lastInspectState = useRef(false);
   const lastShotTimeRef = useRef(0);
-  
   const lastJumpTimeRef = useRef(0);
   const wasJumpDownRef = useRef(false);
   
-  // Triggers for animations
   const [shootTrigger, setShootTrigger] = useState(0);
   const [reloadTrigger, setReloadTrigger] = useState(0);
   const [inspectTrigger, setInspectTrigger] = useState(0);
-  
   const reloadTimerRef = useRef<number | null>(null);
 
-  // Throttling network updates
   const lastNetworkUpdate = useRef(0);
-
   const rotationRef = useRef({ yaw: 0, pitch: 0 });
   const bodyYawRef = useRef(0);
   const mapObjectRef = useRef<Object3D | null>(null);
 
   const downRaycaster = useMemo(() => new Raycaster(), []);
   const horizontalRaycaster = useMemo(() => new Raycaster(), []); 
-
   const [muzzleFlashVisible, setMuzzleFlashVisible] = useState(false);
 
-  // --- WEAPON FUNCTIONS ---
+  // --- LISTEN FOR HITS ON NETWORK PLAYERS ---
+  useEffect(() => {
+    const handleMannequinHit = (e: any) => {
+        // e.detail contains { id, force }
+        // If id starts with 'player-', it's a network player
+        if (e.detail && typeof e.detail.id === 'string') { // Check if valid ID
+             // If we hit a network player, tell the server
+             // Note: In World.tsx we normally assign network players their socket ID as ID
+             if (socketManager.otherPlayers[e.detail.id]) {
+                 socketManager.socket?.emit('hit', {
+                     targetId: e.detail.id,
+                     damage: currentWeapon.damage,
+                     force: e.detail.force
+                 });
+             }
+        }
+    };
+    window.addEventListener('MANNEQUIN_HIT', handleMannequinHit);
+    return () => window.removeEventListener('MANNEQUIN_HIT', handleMannequinHit);
+  }, [currentWeapon.damage]);
 
   const performBuy = (weaponId: 'pistol' | 'ak47') => {
       setShootTrigger(0);
@@ -152,16 +155,11 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       setAmmo(WEAPONS_DATA[weaponId].maxAmmo);
       setIsReloading(false);
       setIsEquipped(true);
-      
       if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
   };
 
   useEffect(() => {
-      const onBuy = (e: any) => {
-          if (e.detail) {
-              performBuy(e.detail);
-          }
-      };
+      const onBuy = (e: any) => { if (e.detail) performBuy(e.detail); };
       window.addEventListener('GAME_BUY_WEAPON', onBuy);
       return () => window.removeEventListener('GAME_BUY_WEAPON', onBuy);
   }, []);
@@ -170,7 +168,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
       if (isReloading || ammo === currentWeapon.maxAmmo) return;
       setIsReloading(true);
       setReloadTrigger(c => c + 1);
-      
       if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
       reloadTimerRef.current = setTimeout(() => {
           setAmmo(currentWeapon.maxAmmo);
@@ -180,24 +177,15 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   };
 
   useEffect(() => {
-    return () => {
-        if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
-    };
+    return () => { if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current); };
   }, [currentWeaponId]); 
 
-  // Sync HUD
   useEffect(() => {
       window.dispatchEvent(new CustomEvent('HUD_UPDATE', { 
-          detail: { 
-              visible: isEquipped && !isThirdPerson, 
-              ammo, 
-              isReloading,
-              health 
-          } 
+          detail: { visible: isEquipped && !isThirdPerson, ammo, isReloading, health } 
       }));
   }, [ammo, isReloading, isEquipped, isThirdPerson, health]);
 
-  // Handle Buy Menu Toggle Key
   useEffect(() => {
       if (controls.buy && !lastBuyState.current) {
           const newState = !isBuyMenuOpen;
@@ -208,25 +196,20 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   }, [controls.buy, isBuyMenuOpen, onBuyMenuToggle]);
 
   useEffect(() => {
-      if (isLocked && isBuyMenuOpen) {
-          setIsBuyMenuOpen(false);
-      }
+      if (isLocked && isBuyMenuOpen) setIsBuyMenuOpen(false);
   }, [isLocked]);
 
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
     const now = Date.now();
     
-    // --- POS UPDATE FOR HUD & NETWORK ---
     if (meshRef.current) {
         const p = meshRef.current.position;
-        window.dispatchEvent(new CustomEvent('HUD_POS_UPDATE', { 
-            detail: { x: p.x, y: p.y, z: p.z } 
-        }));
+        window.dispatchEvent(new CustomEvent('HUD_POS_UPDATE', { detail: { x: p.x, y: p.y, z: p.z } }));
 
-        if (socketManager.socket && now - lastNetworkUpdate.current > 30) {
+        // NETWORK UPDATE: Reduced to 15ms for ~66 tick smoothness
+        if (socketManager.socket && now - lastNetworkUpdate.current > 15) {
              const isMoving = controls.forward || controls.backward || controls.left || controls.right;
-             // Send 'none' if unequipped so other players see empty hands
              const weaponToSend = isEquipped ? currentWeaponId : 'none';
              
              socketManager.updatePosition(
@@ -238,9 +221,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
              lastNetworkUpdate.current = now;
         }
         
-        // --- VOID CHECK (FALL THROUGH MAP FIX) ---
         if (p.y < -20) {
-            console.warn("Fell through map! Teleporting to spawn.");
             meshRef.current.position.set(SPAWN_POS[0], SPAWN_POS[1], SPAWN_POS[2]);
             velocityRef.current.set(0, 0, 0);
         }
@@ -248,20 +229,13 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
     if (!mapObjectRef.current) {
         const map = scene.getObjectByName('environment');
-        if (map) {
-            mapObjectRef.current = map;
-        } else {
+        if (map) mapObjectRef.current = map;
+        else {
             if (meshRef.current) {
                 meshRef.current.position.set(SPAWN_POS[0], SPAWN_POS[1], SPAWN_POS[2]);
                 velocityRef.current.set(0,0,0);
             }
-            if (rbRef.current) {
-                 rbRef.current.setNextKinematicTranslation({
-                     x: SPAWN_POS[0], 
-                     y: SPAWN_POS[1] + 0.9, 
-                     z: SPAWN_POS[2]
-                 });
-            }
+            if (rbRef.current) rbRef.current.setNextKinematicTranslation({ x: SPAWN_POS[0], y: SPAWN_POS[1] + 0.9, z: SPAWN_POS[2] });
             return; 
         }
     }
@@ -297,10 +271,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
             const velocity = direction.multiplyScalar(BULLET_SPEED);
 
             const event = new CustomEvent('FIRE_BULLET', { 
-                detail: { 
-                    position: spawnPos, 
-                    velocity: velocity 
-                } 
+                detail: { position: spawnPos, velocity: velocity } 
             });
             window.dispatchEvent(event);
         } else {
@@ -309,14 +280,10 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     }
     lastShootState.current = controls.shoot;
     
-    if (controls.reload && !lastReloadState.current && isEquipped && !isBuyMenuOpen) {
-        startReload();
-    }
+    if (controls.reload && !lastReloadState.current && isEquipped && !isBuyMenuOpen) startReload();
     lastReloadState.current = controls.reload;
 
-    if (controls.inspect && !lastInspectState.current && isEquipped && !isReloading && !isBuyMenuOpen) {
-        setInspectTrigger(c => c + 1);
-    }
+    if (controls.inspect && !lastInspectState.current && isEquipped && !isReloading && !isBuyMenuOpen) setInspectTrigger(c => c + 1);
     lastInspectState.current = controls.inspect;
   });
 
@@ -356,7 +323,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
   useEffect(() => { if (controls.toggleView && !lastToggleViewState.current) setIsThirdPerson(p => !p); lastToggleViewState.current = controls.toggleView; }, [controls.toggleView]);
   useEffect(() => { if (controls.equip && !lastEquipState.current) setIsEquipped(p => !p); lastEquipState.current = controls.equip; }, [controls.equip]);
 
-  // Animation Logic
   useEffect(() => {
     if (!actions || Object.keys(actions).length === 0) return;
     const isMoving = controls.forward || controls.backward || controls.left || controls.right;
@@ -392,8 +358,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   useFrame((state, delta) => {
     if (!meshRef.current || !mapObjectRef.current) return;
-
-    // Define time here to be used for weapon sway
     const time = state.clock.getElapsedTime(); 
 
     const cameraYaw = rotationRef.current.yaw;
@@ -411,7 +375,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     const collisionObjects = mapObjectRef.current ? [mapObjectRef.current] : [];
     const groundHits = collisionObjects.length > 0 ? downRaycaster.intersectObjects(collisionObjects, true) : [];
     
-    // FIX: Increased ground check distance from 0.55 to 0.7 to catch landings better
     if (groundHits.length > 0 && groundHits[0].distance < 0.7 && velocityRef.current.y <= 0) {
          onGround = true;
          groundHeight = groundHits[0].point.y;
@@ -430,7 +393,6 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
     if (!isFlying && wishDir.dot(forward.clone().negate()) < 0.5) wishSpeed /= 1.7;
 
     if (isFlying) {
-        // Flying logic (omitted for brevity, unchanged)
         const speed = controls.boost ? SUPER_SPEED : FLY_SPEED;
         const camDir = new Vector3(Math.sin(cameraYaw) * Math.cos(cameraPitch), Math.sin(cameraPitch), Math.cos(cameraYaw) * Math.cos(cameraPitch));
         const camRight = new Vector3(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
@@ -563,12 +525,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
 
   return (
     <>
-        <RigidBody 
-            ref={rbRef} 
-            type="kinematicPosition" 
-            colliders={false}
-            position={SPAWN_POS}
-        >
+        <RigidBody ref={rbRef} type="kinematicPosition" colliders={false} position={SPAWN_POS}>
             <CapsuleCollider args={[0.5, 0.3]} />
         </RigidBody>
 
@@ -577,10 +534,7 @@ export const ActivePlayer = ({ isLocked, onBuyMenuToggle }: { isLocked: boolean,
                 <primitive object={modelScene} scale={0.66} rotation={[0, Math.PI, 0]} />
                 {isThirdPerson && rightArmBoneRef.current && isEquipped && createPortal(
                     <group position={[0, -0.65, 0.15]} rotation={[Math.PI / 2 - 0.2, Math.PI, Math.PI]} scale={1.2}>
-                        <WeaponRenderer 
-                            key={currentWeaponId}
-                            weaponId={currentWeaponId}
-                        />
+                        <WeaponRenderer key={currentWeaponId} weaponId={currentWeaponId} />
                     </group>, 
                     rightArmBoneRef.current
                 )}

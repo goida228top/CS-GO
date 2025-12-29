@@ -35,7 +35,7 @@ io.on('connection', (socket) => {
         position: { x: 0, y: 0, z: 0 },
         rotation: { y: 0 },
         weapon: 'pistol',
-        animState: { isCrouching: false, isMoving: false } // Default anim state
+        animState: { isCrouching: false, isMoving: false } 
     };
 
     // --- LOBBY LOGIC ---
@@ -92,7 +92,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GAME LOGIC (Fast Relay) ---
+    // --- GAME LOGIC ---
 
     // 1. MOVEMENT & STATE UPDATE
     socket.on('update', (data) => {
@@ -102,10 +102,10 @@ io.on('connection', (socket) => {
             p.position = data.pos;
             p.rotation = data.rot;
             p.weapon = data.weapon;
-            p.animState = data.animState; // Sync Animation Flags
+            p.animState = data.animState;
             
-            // Broadcast to others in room (Volatile = Fire and Forget, good for movement)
-            socket.to(p.roomId).volatile.emit('player_moved', {
+            // Broadcast to others (Removed volatile for smoother movement on standard connections)
+            socket.to(p.roomId).emit('player_moved', {
                 id: socket.id,
                 pos: data.pos,
                 rot: data.rot,
@@ -115,11 +115,10 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 2. SHOOTING (Critical reliability)
+    // 2. SHOOTING
     socket.on('shoot', (data) => {
         const p = players[socket.id];
         if (p && p.roomId) {
-            // Relay shoot event to trigger visuals/sounds on other clients
             socket.to(p.roomId).emit('player_shot', {
                 id: socket.id,
                 origin: data.origin,
@@ -143,11 +142,32 @@ io.on('connection', (socket) => {
             if (target.health <= 0 && !target.isDead) {
                 target.isDead = true;
                 target.deaths = (target.deaths || 0) + 1;
+                
+                // Broadcast death AND update internal room state so new joiners see them dead
+                if (rooms[p.roomId].players[targetId]) {
+                    rooms[p.roomId].players[targetId].isDead = true;
+                }
+                
                 io.to(p.roomId).emit('player_died', { 
                     victimId: targetId, 
-                    killerId: socket.id 
+                    killerId: socket.id,
+                    force: data.force || {x:0, y:0, z:0} // Pass force for ragdoll
                 });
             }
+        }
+    });
+    
+    // 4. RESPAWN (Simple logic for now)
+    socket.on('request_respawn', () => {
+        const p = players[socket.id];
+        if (p && p.roomId) {
+            p.isDead = false;
+            p.health = 100;
+            if (rooms[p.roomId].players[socket.id]) {
+                rooms[p.roomId].players[socket.id].isDead = false;
+                rooms[p.roomId].players[socket.id].health = 100;
+            }
+            io.to(p.roomId).emit('player_respawned', { id: socket.id });
         }
     });
 
@@ -174,6 +194,8 @@ function joinRoomLogic(socket, roomId, isHost) {
     p.roomId = roomId;
     p.isHost = isHost;
     p.team = null; 
+    p.isDead = false;
+    p.health = 100;
 
     room.players[socket.id] = p;
 

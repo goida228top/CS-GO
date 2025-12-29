@@ -71,14 +71,13 @@ class SocketManager {
                      rotation: data.rot,
                      weapon: data.weapon,
                      animState: data.animState || { isCrouching: false, isMoving: false },
-                     shootTrigger: 0
+                     shootTrigger: 0,
+                     isDead: false
                  };
              }
         });
 
-        // Handle shooting specifically to trigger animation
         this.socket.on('player_shot', (data) => {
-            // console.log("🔫 Player shot event received:", data.id);
             if (this.otherPlayers[data.id]) {
                 const current = this.otherPlayers[data.id].shootTrigger || 0;
                 this.otherPlayers[data.id].shootTrigger = current + 1;
@@ -91,6 +90,21 @@ class SocketManager {
                 } 
             });
             window.dispatchEvent(event);
+        });
+
+        // Update Death State
+        this.socket.on('player_died', (data) => {
+            const { victimId, force } = data;
+            if (this.otherPlayers[victimId]) {
+                this.otherPlayers[victimId].isDead = true;
+                this.otherPlayers[victimId].deathForce = force;
+            }
+        });
+
+        this.socket.on('player_respawned', (data) => {
+             if (this.otherPlayers[data.id]) {
+                 this.otherPlayers[data.id].isDead = false;
+             }
         });
 
         this.socket.on('disconnect', () => {
@@ -111,7 +125,8 @@ class SocketManager {
                     rotation: p.rotation || { y: 0 },
                     weapon: p.weapon || 'pistol',
                     animState: p.animState || { isCrouching: false, isMoving: false },
-                    shootTrigger: existing.shootTrigger || 0
+                    shootTrigger: existing.shootTrigger || 0,
+                    isDead: p.isDead || false
                 };
             }
         });

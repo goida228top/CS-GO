@@ -1,15 +1,17 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import { Vector3, Object3D, MathUtils } from 'three';
-import { PLAYER_MODEL_URL } from './constants';
+import { PLAYER_MODEL_URL, BODY_HALF_SIZE, HEAD_HALF_SIZE, LIMB_HALF_SIZE } from './constants';
 import { SkeletonUtils } from 'three-stdlib';
 import { useFrame, createPortal } from '@react-three/fiber';
 import { WeaponRenderer } from './WeaponRenderer';
 import { socketManager } from './SocketManager'; 
+import { Ragdoll } from './Ragdoll';
+import { RigidBody } from '@react-three/rapier';
+import { Hitbox } from './Hitbox';
 
 interface NetworkPlayerProps {
     id: string;
-    // Initial props 
     position: { x: number, y: number, z: number };
     rotation: { y: number };
     color: string;
@@ -52,48 +54,53 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
     const targetRot = useRef(rotation.y);
     const animStateRef = useRef({ isCrouching: false, isMoving: false });
 
-    // Local state for Weapon to trigger re-render of portal
+    // State for local logic
     const [activeWeapon, setActiveWeapon] = useState<string>(initialWeapon);
-    // Local state for Shoot trigger
     const [shootTrigger, setShootTrigger] = useState(0);
+    const [isDead, setIsDead] = useState(false);
+    const [deathForce, setDeathForce] = useState(new Vector3(0,0,0));
 
-    // Track previous trigger to detect change
     const lastShootTriggerRef = useRef(0);
 
     // --- DIRECT UPDATE LOOP ---
     useFrame((state, delta) => {
-        // 1. FETCH LATEST DATA
         const latestData = socketManager.otherPlayers[id];
         
         if (latestData) {
-            targetPos.current.set(latestData.position.x, latestData.position.y, latestData.position.z);
-            targetRot.current = latestData.rotation.y;
-            
-            // Sync Weapon Type
-            if (latestData.weapon !== activeWeapon) {
-                setActiveWeapon(latestData.weapon);
+            // Check Death first
+            if (latestData.isDead !== isDead) {
+                setIsDead(latestData.isDead);
+                if (latestData.isDead && latestData.deathForce) {
+                    setDeathForce(new Vector3(latestData.deathForce.x, latestData.deathForce.y, latestData.deathForce.z));
+                }
             }
 
-            // Sync Shooting
-            if (latestData.shootTrigger && latestData.shootTrigger > lastShootTriggerRef.current) {
-                setShootTrigger(prev => prev + 1);
-                lastShootTriggerRef.current = latestData.shootTrigger;
-            }
+            if (!latestData.isDead) {
+                targetPos.current.set(latestData.position.x, latestData.position.y, latestData.position.z);
+                targetRot.current = latestData.rotation.y;
+                
+                if (latestData.weapon !== activeWeapon) setActiveWeapon(latestData.weapon);
 
-            if (latestData.animState) {
-                animStateRef.current = latestData.animState;
+                if (latestData.shootTrigger && latestData.shootTrigger > lastShootTriggerRef.current) {
+                    setShootTrigger(prev => prev + 1);
+                    lastShootTriggerRef.current = latestData.shootTrigger;
+                }
+
+                if (latestData.animState) animStateRef.current = latestData.animState;
             }
         }
 
-        // 2. SMOOTH INTERPOLATION (LERP)
+        if (isDead) return; // Don't animate alive model if dead
+
+        // 2. SMOOTH INTERPOLATION (Reduced speed for smoother look, 20 -> 12)
         if (groupRef.current) {
-            groupRef.current.position.lerp(targetPos.current, delta * 20); 
+            groupRef.current.position.lerp(targetPos.current, delta * 12); 
             
             let currentRot = groupRef.current.rotation.y;
             let diff = targetRot.current - currentRot;
             while (diff > Math.PI) diff -= Math.PI * 2;
             while (diff < -Math.PI) diff += Math.PI * 2;
-            groupRef.current.rotation.y += diff * delta * 15;
+            groupRef.current.rotation.y += diff * delta * 10;
         }
 
         // 3. ANIMATION STATE LOGIC
@@ -108,12 +115,9 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
             const isMoving = animStateRef.current.isMoving;
             const isCrouching = animStateRef.current.isCrouching;
             
-            let animToPlay = 'pistol'; // default idle
+            let animToPlay = 'pistol'; 
             
-            // Check if we have a weapon
             if (activeWeapon === 'none') {
-                // If no weapon, ideally play 'idle' or 'walk' without pistol pose
-                // For now, reusing pistol anims or specific if available
                 animToPlay = isMoving ? 'walk' : 'idle';
             } else {
                 if (isMoving) {
@@ -135,27 +139,56 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
         }
     });
 
+    if (isDead) {
+        return (
+            <Ragdoll 
+                id={id}
+                position={targetPos.current}
+                initialVelocity={deathForce}
+            />
+        );
+    }
+
+    // Hitbox offsets for valid shooting
+    const legHeight = LIMB_HALF_SIZE.y * 2;
+    const bodyHeight = BODY_HALF_SIZE.y * 2;
+    
+    const bodyPos: [number, number, number] = [0, legHeight + BODY_HALF_SIZE.y, 0];
+    const headPos: [number, number, number] = [0, legHeight + bodyHeight + HEAD_HALF_SIZE.y, 0];
+    const legLeftPos: [number, number, number] = [-BODY_HALF_SIZE.x / 2, LIMB_HALF_SIZE.y, 0];
+    const legRightPos: [number, number, number] = [BODY_HALF_SIZE.x / 2, LIMB_HALF_SIZE.y, 0];
+
     return (
         <group ref={groupRef} position={[position.x, position.y, position.z]}>
+            
+            {/* INVISIBLE HITBOXES FOR RAYCASTING */}
+            {/* We attach these to the group so they move with the interpolated player */}
+            {/* IMPORTANT: We give them userData.id = network ID so ActivePlayer can identify who was shot */}
+            <group userData={{ isMannequin: true, id: id }}>
+                 <Hitbox position={bodyPos} args={BODY_HALF_SIZE} />
+                 <Hitbox position={headPos} args={HEAD_HALF_SIZE} />
+                 <Hitbox position={legLeftPos} args={LIMB_HALF_SIZE} />
+                 <Hitbox position={legRightPos} args={LIMB_HALF_SIZE} />
+            </group>
+
             {/* Nickname Tag */}
             <mesh position={[0, 2.3, 0]}>
                 <planeGeometry args={[1, 0.25]} />
                 <meshBasicMaterial color="black" transparent opacity={0.5} />
             </mesh>
-            
+             {/* Text for nickname would be nice but texture is easier for now */}
+
             {/* Visual Model Container */}
             <group ref={modelRef}>
                 <primitive object={clone} scale={0.66} rotation={[0, Math.PI, 0]} />
                 
-                {/* WEAPON ATTACHMENT */}
                 {rightHandBone && activeWeapon !== 'none' && createPortal(
                     <group position={[0, -0.65, 0.15]} rotation={[Math.PI / 2 - 0.2, Math.PI, Math.PI]} scale={1.2}>
                         <WeaponRenderer 
-                            key={activeWeapon} // Remount on weapon swap
+                            key={activeWeapon} 
                             weaponId={activeWeapon as 'pistol' | 'ak47'} 
-                            shootTrigger={shootTrigger} // Pass trigger to renderer
+                            shootTrigger={shootTrigger} 
                         />
-                        {/* Muzzle Flash for remote players */}
                         <MuzzleFlash trigger={shootTrigger} />
                     </group>,
                     rightHandBone
@@ -171,11 +204,8 @@ export const NetworkPlayer: React.FC<NetworkPlayerProps> = ({
     );
 };
 
-// Simple Muzzle Flash Component
 const MuzzleFlash = ({ trigger }: { trigger: number }) => {
     const [visible, setVisible] = useState(false);
-    
-    // On trigger change, flash on then off
     React.useEffect(() => {
         if (trigger > 0) {
             setVisible(true);
@@ -183,9 +213,7 @@ const MuzzleFlash = ({ trigger }: { trigger: number }) => {
             return () => clearTimeout(t);
         }
     }, [trigger]);
-
     if (!visible) return null;
-
     return (
          <group position={[0, 0.1, 0.5]}>
             <pointLight distance={3} intensity={5} color="orange" decay={2} />
